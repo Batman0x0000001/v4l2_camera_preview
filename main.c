@@ -6,6 +6,15 @@
 #include<fcntl.h>
 #include"app.h"
 
+/*
+    在 V4L2 中几乎所有操作都通过它完成
+        ioctl(fd, request, arg);
+            │    │        └─ 数据（传入或传出）
+            │    └────────── 命令（做什么操作）
+            └─────────────── 文件描述符（哪个设备）
+    对 ioctl 加了一层重试保护，屏蔽信号中断的干扰，
+    让上层调用者只需要关心成功或真正的错误，不用关心信号问题。
+*/
 static int xioctl(int fd,int request,void *arg){
     int ret;
 
@@ -30,7 +39,7 @@ static int open_device(AppState *app){
     app->fd = open(app->device_path,O_RDWR | O_NONBLOCK,0);
     if(app->fd < 0){
         perror("open");
-        exit(EXIT_FAILURE);
+        return -1;
     }
 
     return 0;
@@ -43,7 +52,7 @@ static int query_capability(AppState *app){
 
     if(xioctl(app->fd,VIDIOC_QUERYCAP,&cap) < 0){
         perror("VIDIOC_QUERYCAP");
-        exit(EXIT_FAILURE);
+        return -1;
     }
     
     printf("driver:%s\n",cap.driver);
@@ -73,6 +82,179 @@ static void cleanup(AppState *app){
     }
 }
 
+static void print_fourcc(uint32_t pixfmt){
+    /*
+        进制      每位表示   表示1字节需要
+        二进制     1 bit        8位
+        十六进制    4 bit        2位
+        0x00565955 = 0000 0000 0101 0110 0101 1001 0101 0101
+        & 0xff     = 0000 0000 0000 0000 0000 0000 1111 1111
+    */
+    printf("'%c%c%c%c'",pixfmt & 0xff,
+        (pixfmt >> 8) & 0xff,
+        (pixfmt >> 16) & 0xff,
+        (pixfmt >> 24) & 0xff);
+}
+
+static int enum_formats(AppState *app){
+    struct v4l2_fmtdesc fmtdesc;
+
+    memset(&fmtdesc,0,sizeof(struct v4l2_fmtdesc));
+    fmtdesc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+    printf("设备支持的采集格式：\n");
+
+    for (fmtdesc.index = 0; ; fmtdesc.index++)
+    {
+        if(xioctl(app->fd,VIDIOC_ENUM_FMT,&fmtdesc)<0){
+            if(errno == EINVAL){
+                break;
+            }
+            perror("VIDIOC_ENUM_FMT");
+            return -1;
+        }
+
+        printf("[%u]",fmtdesc.index);
+        print_fourcc(fmtdesc.pixelformat);
+        printf("%s\n",fmtdesc.description);
+    }
+    
+    return 0;
+}
+
+static int enum_frame_sizes(AppState *app,uint32_t pixfmt){
+    struct v4l2_frmsizeenum frmsize;
+
+    memset(&frmsize,0,sizeof(struct v4l2_frmsizeenum));
+    frmsize.pixel_format = pixfmt;
+
+    printf("格式\n");
+    print_fourcc(pixfmt);
+    printf("支持的分辨率：\n");
+
+    for(frmsize.index = 0;;frmsize.index++){
+        if(xioctl(app->fd,VIDIOC_ENUM_FRAMESIZES,&frmsize)<0){
+            if(errno == EINVAL){
+                break;
+            }
+            perror("VIDIOC_ENUM_FRAMESIZES");
+            return -1;
+        }
+
+        if(frmsize.type == V4L2_FRMSIZE_TYPE_DISCRETE){
+            //离散值：设备只支持固定几种分辨率
+            printf("[%u] %u x %u\n",frmsize.index,
+                frmsize.discrete.width,
+                frmsize.discrete.height);
+        }else if (frmsize.type == V4L2_FRMSIZE_TYPE_STEPWISE)
+        {
+            //步进范围：在最小/最大之间，按步长递增
+            printf("[%u] stepwise:%u x %u -> %u x %u, step %u x %u\n",
+                frmsize.index,
+                frmsize.stepwise.min_width,
+                frmsize.stepwise.min_height,
+                frmsize.stepwise.max_width,
+                frmsize.stepwise.max_height,
+                frmsize.stepwise.step_width,
+                frmsize.stepwise.step_height);
+        }else if (frmsize.type == V4L2_FRMSIZE_TYPE_CONTINUOUS)
+        {
+            //连续范围：最小到最大之间任意值
+            printf("[%u] continuous: %u x %u -> %u x %u\n",
+                frmsize.index,
+                frmsize.stepwise.min_width,
+                frmsize.stepwise.min_height,
+                frmsize.stepwise.max_width,
+                frmsize.stepwise.max_height);
+        }
+    }
+
+    return 0;
+}
+
+static int enum_frame_intervals(AppState *app,uint32_t pixfmt,uint32_t width,uint32_t height){
+    struct v4l2_frmivalenum frmival;
+
+    memset(&frmival,0,sizeof(struct v4l2_frmivalenum));
+    frmival.pixel_format = pixfmt;
+    frmival.width = width;
+    frmival.height = height;
+
+    printf("格式\n");
+    print_fourcc(pixfmt);
+    printf("在%u x %u下支持的帧间隔:\n",width,height);
+
+    for(frmival.index = 0;;frmival.index++){
+        if(xioctl(app->fd,VIDIOC_ENUM_FRAMEINTERVALS,&frmival)<0){
+            if(errno == EINVAL){
+                break;
+            }
+            perror("VIDIOC_ENUM_FRAMEINTERVALS");
+            return -1;
+        }
+
+        if(frmival.type == V4L2_FRMIVAL_TYPE_DISCRETE){
+            printf("[%u] %u / %u秒(约%.2ffps)\n",
+                frmival.index,
+                frmival.discrete.numerator,//分子
+                frmival.discrete.denominator,//分母
+                (double)frmival.discrete.denominator/frmival.discrete.numerator);
+        }else if (frmival.type == V4L2_FRMIVAL_TYPE_STEPWISE || frmival.type == V4L2_FRMIVAL_TYPE_CONTINUOUS)
+        {
+            printf("[%u]非离散帧间隔(stepwise/continuous)\n",frmival.index);
+        }
+    }
+
+    return 0;
+}
+
+static int set_format(AppState *app){
+    struct v4l2_format fmt;
+
+    memset(&fmt,0,sizeof(struct v4l2_format));
+    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    fmt.fmt.pix.width = app->width;
+    fmt.fmt.pix.height = app->height;
+    fmt.fmt.pix.pixelformat = app->pixfmt;
+    fmt.fmt.pix.field = V4L2_FIELD_ANY;
+
+    if(xioctl(app->fd,VIDIOC_S_FMT,&fmt)<0){
+        perror("VIDIOC_S_FMT");
+        return -1;
+    }
+
+    app->width = fmt.fmt.pix.width;
+    app->height = fmt.fmt.pix.height;
+    app->pixfmt = fmt.fmt.pix.pixelformat;
+
+    printf("协商后的格式：\n");
+    printf("size:%d x %d\n",app->width,app->height);
+    printf("pixfmt:");
+    print_fourcc(app->pixfmt);
+    printf("\n");
+    printf("bytesline:%u\n",fmt.fmt.pix.bytesperline);
+    printf("sizeimage:%u\n",fmt.fmt.pix.sizeimage);
+
+    return 0;
+}
+
+static void explain_selected_format(uint32_t pixfmt){
+    printf("当前选择的格式说明：\n");
+
+    if(pixfmt == V4L2_PIX_FMT_YUYV){
+        printf("YUYV: 原始打包 YUV 格式,适合理解V4L2 buffer与像素布局。\n");
+        printf("    优点: 无需先解码,调试采集链路直观。\n");
+        printf("    缺点: 带宽占用通常比 MJPEG 更大。\n");
+    }else if (pixfmt == V4L2_PIX_FMT_MJPEG)
+    {
+        printf("MJPEG: 压缩格式,常见于 USB 摄像头。\n");
+        printf("    优点: 带宽压力较小,高分辨率时常更容易跑高fps。\n");
+        printf("    缺点: 还需要额外解码才能显示或处理。\n");
+    }else{
+        printf("这是其他格式,后续需要根据具体格式决定是否解码或做颜色转换。\n");
+    }  
+}
+
 int main(int argc, char const *argv[])
 {
     AppState app;
@@ -94,6 +276,11 @@ int main(int argc, char const *argv[])
     }
 
     printf("V4L2 设备打开成功，能力检查通过。\n");
+
+    enum_formats(&app);
+    enum_frame_sizes(&app,V4L2_PIX_FMT_YUYV);
+    enum_frame_intervals(&app,V4L2_PIX_FMT_YUYV,640,480);
+    explain_selected_format(V4L2_PIX_FMT_YUYV);
 
     cleanup(&app);
     return 0;
