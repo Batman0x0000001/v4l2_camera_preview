@@ -1,20 +1,28 @@
 CC := gcc
+
+TARGET := v4l2_camera_preview
+
+SRCS := main.c \
+        v4l2_core.c
+
+OBJS := $(SRCS:.c=.o)
+
 CFLAGS := -Wall -Wextra -O2 -g
-TARGET := v4l2_open_test
-SRC := main.c
+PKG_CFLAGS := $(shell pkg-config --cflags sdl2)
+PKG_LIBS := $(shell pkg-config --libs sdl2)
 
 all: $(TARGET)
 
-$(TARGET): $(SRC)
-	$(CC) $(CFLAGS) -o $@ $(SRC)
+$(TARGET): $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $(OBJS) $(PKG_LIBS)
+
+%.o: %.c app.h v4l2_core.h
+	$(CC) $(CFLAGS) $(PKG_CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(TARGET)
+	rm -f $(OBJS) $(TARGET) frame.raw frame.ppm
 
 run: $(TARGET)
 	./$(TARGET)
 
-run-dev0: $(TARGET)
-	./$(TARGET) /dev/video0
-
-.PHONY: all clean run run-dev0
+.PHONY: all clean run

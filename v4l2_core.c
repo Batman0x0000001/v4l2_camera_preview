@@ -27,7 +27,7 @@ static int xioctl(int fd,int request,void *arg){
     return ret;
 }
 
-static void app_state_init(AppState *app,const char *device_path){
+void app_state_init(AppState *app,const char *device_path){
     memset(app,0,sizeof(AppState));
 
     snprintf(app->device_path,sizeof(app->device_path),"%s",device_path);
@@ -37,7 +37,7 @@ static void app_state_init(AppState *app,const char *device_path){
     app->pixfmt = V4L2_PIX_FMT_YUYV;
 }
 
-static int open_device(AppState *app){
+int open_device(AppState *app){
     app->fd = open(app->device_path,O_RDWR | O_NONBLOCK,0);
     if(app->fd < 0){
         perror("open");
@@ -47,7 +47,7 @@ static int open_device(AppState *app){
     return 0;
 }
 
-static int query_capability(AppState *app){
+int query_capability(AppState *app){
     struct v4l2_capability cap;
 
     memset(&cap,0,sizeof(cap));
@@ -91,7 +91,7 @@ static void print_fourcc(uint32_t pixfmt){
         (pixfmt >> 24) & 0xff);
 }
 
-static int enum_formats(AppState *app){
+int enum_formats(AppState *app){
     struct v4l2_fmtdesc fmtdesc;
 
     memset(&fmtdesc,0,sizeof(struct v4l2_fmtdesc));
@@ -117,7 +117,7 @@ static int enum_formats(AppState *app){
     return 0;
 }
 
-static int enum_frame_sizes(AppState *app,uint32_t pixfmt){
+int enum_frame_sizes(AppState *app,uint32_t pixfmt){
     struct v4l2_frmsizeenum frmsize;
 
     memset(&frmsize,0,sizeof(struct v4l2_frmsizeenum));
@@ -167,7 +167,7 @@ static int enum_frame_sizes(AppState *app,uint32_t pixfmt){
     return 0;
 }
 
-static int enum_frame_intervals(AppState *app,uint32_t pixfmt,uint32_t width,uint32_t height){
+int enum_frame_intervals(AppState *app,uint32_t pixfmt,unsigned int width,unsigned int height){
     struct v4l2_frmivalenum frmival;
 
     memset(&frmival,0,sizeof(struct v4l2_frmivalenum));
@@ -203,7 +203,7 @@ static int enum_frame_intervals(AppState *app,uint32_t pixfmt,uint32_t width,uin
     return 0;
 }
 
-static int set_format(AppState *app){
+int set_format(AppState *app){
     struct v4l2_format fmt;
 
     memset(&fmt,0,sizeof(struct v4l2_format));
@@ -233,7 +233,7 @@ static int set_format(AppState *app){
     return 0;
 }
 
-static void explain_selected_format(uint32_t pixfmt){
+void explain_selected_format(uint32_t pixfmt){
     printf("当前选择的格式说明：\n");
 
     if(pixfmt == V4L2_PIX_FMT_YUYV){
@@ -252,7 +252,7 @@ static void explain_selected_format(uint32_t pixfmt){
 
 
 //mmap 让用户程序和内核共享同一块物理内存
-static int init_mmap(AppState *app){
+int init_mmap(AppState *app){
     struct v4l2_requestbuffers req;
 
     memset(&req,0,sizeof(struct v4l2_requestbuffers));
@@ -318,7 +318,7 @@ static int init_mmap(AppState *app){
     return 0;
 }
 
-static int start_capturing(AppState *app){
+int start_capturing(AppState *app){
     enum v4l2_buf_type type;
 
     for(unsigned int i = 0;i < app->n_buffers;i++){
@@ -346,7 +346,7 @@ static int start_capturing(AppState *app){
     return 0;
 }
 
-static void stop_capturing(AppState *app){
+void stop_capturing(AppState *app){
     enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 
     if(app->fd >= 0){
@@ -356,7 +356,7 @@ static void stop_capturing(AppState *app){
     }
 }
 
-static void uninit_mmap(AppState *app){
+void uninit_mmap(AppState *app){
     if(!app->buffers){
         return;
     }
@@ -473,6 +473,159 @@ int capture_one_frame(AppState *app,const char *output_path){
 
         break;
     }
+    return 0;
+}
+
+static inline unsigned char clip_int(int v){
+    if(v < 0){
+        return 0;
+    }
+    if(v > 255){
+        return 255;
+    }
+    return (unsigned char)v;
+}
+
+static void yuyv_to_rgb24(const unsigned char *src,unsigned char *dst,int width,int height){
+    int x,y;
+
+    for(y = 0;y<height;y++){
+        const unsigned char *line = src + y*width*2;
+        unsigned char *out = dst + y*width*3;
+
+        for(x = 0;x<width;x+=2){
+            int y0 = line[0];
+            int u  = line[1];
+            int y1 = line[2];
+            int v  = line[3];
+
+            int c0 = y0 - 16;
+            int c1 = y1 - 16;
+            int d  = u - 128;
+            int e  = v - 128;
+
+            int r0 = (298 * c0 + 409 * e + 128) >> 8;
+            int g0 = (298 * c0 - 100 * d - 208 * e + 128) >> 8;
+            int b0 = (298 * c0 + 516 * d + 128) >> 8;
+
+            int r1 = (298 * c1 + 409 * e + 128) >> 8;
+            int g1 = (298 * c1 - 100 * d - 208 * e + 128) >> 8;
+            int b1 = (298 * c1 + 516 * d + 128) >> 8;
+
+            out[0] = clip_int(r0);
+            out[1] = clip_int(g0);
+            out[2] = clip_int(b0);
+
+            out[3] = clip_int(r1);
+            out[4] = clip_int(g1);
+            out[5] = clip_int(b1);
+
+            line += 4;
+            out  += 6;
+        }
+    }
+}
+
+static int save_ppm(const char *filename,const unsigned char *rgb,int width,int height){
+    FILE *fp = fopen(filename,"wb");
+    
+    if(!fp){
+        perror("fopen");
+        return -1;
+    }
+
+    fprintf(fp,"P6\n%d %d\n255\n",width,height);
+
+    for (int y = 0;y < height; y++){
+        if(fwrite(rgb + y*width*3,1,width*3,fp)!=(size_t)(width*3)){
+            perror("fwrite");
+            fclose(fp);
+            return -1;
+        }
+    }
+
+    fclose(fp);
+
+    return 0;
+}
+
+int capture_one_frame_as_ppm(AppState *app,const char *output_path){
+    fd_set fds;
+    struct timeval tv;
+    int ret;
+
+    while(1){
+        FD_ZERO(&fds);
+        FD_SET(app->fd,&fds);
+
+        tv.tv_sec = 2;
+        tv.tv_usec = 0;
+
+        ret = select(app->fd+1,&fds,NULL,NULL,&tv);
+        if(ret < 0){
+            if(errno == EINTR){
+                continue;
+            }
+            perror("select");
+            return -1;
+        }
+
+        if(ret == 0){
+            fprintf(stderr, "select timeout\n");
+            return -1;
+        }
+
+        {   //作用：创建一个独立的作用域
+            struct v4l2_buffer buf;
+            unsigned char *rgb = NULL;
+            int ret = 0;
+
+            memset(&buf,0,sizeof(struct v4l2_buffer));
+            buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+            buf.memory = V4L2_MEMORY_MMAP;
+
+            if(xioctl(app->fd,VIDIOC_DQBUF,&buf) < 0){
+                if(errno == EAGAIN){
+                    continue;
+                }
+                perror("VIDIOC_DQBUF");
+                return -1;
+            }
+
+            printf("成功取回一帧:index=%u,bytesused=%u,sequence=%u\n",
+                buf.index,
+                buf.bytesused,
+                buf.sequence);
+            
+            rgb = malloc((size_t)app->width*app->height*3);
+            if(!rgb){
+                perror("malloc rgb");
+                if (xioctl(app->fd, VIDIOC_QBUF, &buf) < 0) {
+                    perror("VIDIOC_QBUF");
+                }
+                return -1;
+            }
+
+            yuyv_to_rgb24((const unsigned char *)app->buffers[buf.index].start,
+                rgb,
+                app->width,
+                app->height);
+            ret = save_ppm(output_path,rgb,app->width,app->height);
+            free(rgb);
+
+            if(xioctl(app->fd,VIDIOC_QBUF,&buf) < 0){
+                perror("VIDIOC_QBUF");
+                return -1;
+            }
+
+            if(ret < 0){
+                return -1;
+            }
+
+            break;
+        }
+    }
+    return 0;
 }
 
 void cleanup(AppState *app){

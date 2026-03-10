@@ -17,12 +17,18 @@ int main(int argc, char const *argv[])
         cleanup(&app);
         return -1;
     }
+
+    printf("V4L2 设备打开成功，能力检查通过。\n");
+
     if(query_capability(&app) < 0){
         cleanup(&app);
         return -1;
     }
 
-    printf("V4L2 设备打开成功，能力检查通过。\n");
+    if (enum_formats(&app) < 0) {
+        cleanup(&app);
+        return 1;
+    }
 
     if (enum_frame_sizes(&app, app.pixfmt) < 0) {
         cleanup(&app);
@@ -51,12 +57,12 @@ int main(int argc, char const *argv[])
         return 1;
     }
 
-    if (capture_one_frame(&app, "frame.raw") < 0) {
+    if (capture_one_frame_as_ppm(&app, "frame.ppm") < 0) {
         cleanup(&app);
         return 1;
     }
 
-    printf("已成功导出一帧到 frame.raw\n");
+    printf("已成功导出一帧到 frame.ppm\n");
 
     cleanup(&app);
     return 0;
