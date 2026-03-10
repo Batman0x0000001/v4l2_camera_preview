@@ -4,6 +4,7 @@
 #include<sys/ioctl.h>
 #include<unistd.h>
 #include<fcntl.h>
+#include<sys/mman.h>
 #include"app.h"
 
 /*
@@ -254,6 +255,129 @@ static void explain_selected_format(uint32_t pixfmt){
         printf("这是其他格式,后续需要根据具体格式决定是否解码或做颜色转换。\n");
     }  
 }
+
+
+//mmap 让用户程序和内核共享同一块物理内存
+static int init_mmap(AppState *app){
+    struct v4l2_requestbuffers req;
+
+    memset(&req,0,sizeof(struct v4l2_requestbuffers));
+    req.count = 4;
+    req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    req.memory = V4L2_MEMORY_MMAP;
+
+    if(xioctl(app->fd,VIDIOC_REQBUFS,&req)<0){
+        perror("VIDIOC_REQBUFS");
+        return -1;
+    }
+
+    if(req.count < 2){
+        fprintf(stderr, "可用的MMAP缓冲区太少: %u\n",req.count);
+        return -1;
+    }
+
+    app->buffers = calloc(req.count,sizeof(Buffer));
+    if(!app->buffers){
+        perror("calloc buffers");
+        return -1;
+    }
+
+    app->n_buffers = req.count;
+
+    for (unsigned int i = 0; i < app->n_buffers; i++)
+    {
+        struct v4l2_buffer buf;
+
+        memset(&buf,0,sizeof(struct v4l2_buffer));
+        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        buf.memory = V4L2_MEMORY_MMAP;
+        buf.index = i;
+
+        //查询：问驱动"第i个缓冲区在哪里，多大？"
+        if(xioctl(app->fd,VIDIOC_QUERYBUF,&buf)<0){
+            perror("VIDIOC_QUERYBUF");
+            return -1;
+        }
+
+        app->buffers[i].length = buf.length;
+        // 映射：把内核缓冲区映射到用户空间
+        app->buffers[i].start = mmap(
+            NULL,// 让系统选择映射地址
+            buf.length,
+            PROT_READ | PROT_WRITE,
+            MAP_SHARED,
+            app->fd,
+            buf.m.offset);
+
+        if(app->buffers[i].start == MAP_FAILED){
+            perror("mmap");
+            return -1;
+        }
+
+        //%zu输出size_t型
+        printf("buffer[%u]:lenth=%zu offser=%u\n",
+            i,
+            app->buffers[i].length,
+            buf.m.offset);
+    }
+
+    return 0;
+}
+
+static int start_capturing(AppState *app){
+    enum v4l2_buf_type type;
+
+    for(unsigned int i = 0;i < app->n_buffers;i++){
+        struct v4l2_buffer buf;
+
+        memset(&buf,0,sizeof(struct v4l2_buffer));
+        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        buf.memory = V4L2_MEMORY_MMAP;
+        buf.index = i;
+
+        //VIDIOC_QBUF = enQueue Buffer（入队）
+        if(xioctl(app->fd,VIDIOC_QBUF,&buf)<0){
+            perror("VIDIOC_QBUF");
+            return -1;
+        }
+    }
+
+    type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    // 驱动开始让摄像头往缓冲区写数据
+    if(xioctl(app->fd,VIDIOC_STREAMON,&type)<0){
+        perror("VIDIOC_STREAMON");
+        return -1;
+    }
+
+    return 0;
+}
+
+static void stop_capturing(AppState *app){
+    enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+    if(app->fd >= 0){
+        if(xioctl(app->fd,VIDIOC_STREAMOFF,&type)<0){
+            perror("VIDIOC_STREAMOFF");
+        }
+    }
+}
+
+static void uninit_mmap(AppState *app){
+    if(!app->buffers){
+        return;
+    }
+
+    for(unsigned int i = 0;i<app->n_buffers;i++){
+        if(app->buffers[i].start && app->buffers[i].start != MAP_FAILED){
+            // 解除用户空间到内核空间的映射关系
+            munmap(app->buffers[i].start,app->buffers[i].length);
+        }
+    }
+
+    free(app->buffers);
+    app->buffers = NULL;
+    app->n_buffers = 0;
+}   
 
 int main(int argc, char const *argv[])
 {
