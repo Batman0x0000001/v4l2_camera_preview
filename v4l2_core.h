@@ -31,6 +31,7 @@ int get_control_value(AppState *app,uint32_t id,int32_t *value);
 int set_control_value(AppState *app,uint32_t id,int32_t value);
 
 int query_control_info(AppState *app,uint32_t id,struct v4l2_queryctrl *out);
+int enum_control_menu(AppState *app,struct v4l2_queryctrl *qctrl);
 
 void cleanup(AppState *app);
 

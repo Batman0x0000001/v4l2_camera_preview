@@ -778,6 +778,10 @@ int enum_controls(AppState *app){
                    qctrl.step,
                    qctrl.default_value,
                    qctrl.flags);
+
+            if(qctrl.type == V4L2_CTRL_TYPE_MENU){
+                enum_control_menu(app,&qctrl);
+            }
         }
         qctrl.id |= V4L2_CTRL_FLAG_NEXT_CTRL;
     }
@@ -825,16 +829,6 @@ int set_control_value(AppState *app,uint32_t id,int32_t value){
     return 0;
 }
 
-static void demo_brightness_control(AppState *app){
-    int32_t value =0;
-
-    if(get_control_value(app,V4L2_CID_BRIGHTNESS,&value) == 0){
-        printf("当前的亮度为:%d\n",value);
-    }else{
-        printf("当前设备不支持读取亮度\n");
-    }
-}
-
 int query_control_info(AppState *app,uint32_t id,struct v4l2_queryctrl *out){
     if(!out){
         return -1;
@@ -850,6 +844,24 @@ int query_control_info(AppState *app,uint32_t id,struct v4l2_queryctrl *out){
 
     if(out->flags & V4L2_CTRL_FLAG_DISABLED){
         return -1;
+    }
+
+    return 0;
+}
+
+int enum_control_menu(AppState *app,struct v4l2_queryctrl *qctrl){
+    struct v4l2_querymenu qmenu;
+
+    memset(&qmenu,0,sizeof(struct v4l2_querymenu));
+
+    qmenu.id = qctrl->id;
+
+    printf("MENU options:\n");
+
+    for(qmenu.index = qctrl->minimum;qmenu.index <= (unsigned int)qctrl->maximum;qmenu.index++){
+        if(xioctl(app->fd,VIDIOC_QUERYMENU,&qmenu) == 0){
+            printf("%d:%s\n",qmenu.index,qmenu.name);
+        }
     }
 
     return 0;
