@@ -101,11 +101,17 @@ int main(int argc, char const *argv[])
             {
                 switch (event.key.keysym.sym)
                 {
+                case SDLK_s:
+                    if(display_save_latest_ppm(&app,"screenshot.ppm") < 0){
+                        fprintf(stderr,"截屏失败\n");
+                    }
+                    break;
                 case SDLK_ESCAPE:
                     app.quit = 1;
                     break;
                 case SDLK_SPACE:
                     app.paused = !app.paused;
+                    printf("预览%s\n",app.paused?"暂停":"继续");
                     break;
                 default:
                     break;
@@ -114,6 +120,7 @@ int main(int argc, char const *argv[])
         }
 
         if(display_present_latest(&app) < 0){
+            fprintf(stderr,"显示失败\n");
             break;
         }
 

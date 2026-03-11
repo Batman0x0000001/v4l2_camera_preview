@@ -1,5 +1,6 @@
 #include"display.h"
 #include<string.h>
+#include<errno.h>
 
 int display_init(AppState *app){
     app->window = SDL_CreateWindow(
@@ -52,6 +53,34 @@ void display_destroy(AppState *app){
     }
 }
 
+static void calculate_display_rect(AppState *app,SDL_Rect *rect){
+    int win_w = 0;
+    int win_h = 0;
+    double aspect;
+    int dst_w,dst_h;
+    int x,y;
+
+    SDL_GetWindowSize(app->window,&win_w,&win_h);
+
+    aspect = (double)app->latest.width / (double)app->latest.height;
+
+    dst_h = win_h;
+    dst_w = (int)(dst_h * aspect) & ~1;
+
+    if(dst_w > win_w){
+        dst_w = win_w;
+        dst_h = (int)(dst_w / aspect) & ~1;
+    }
+
+    x = (win_w - dst_w) / 2;
+    y = (win_h - dst_h) / 2;
+
+    rect->w = dst_w;
+    rect->h = dst_h;
+    rect->x = x;
+    rect->y = y;
+}
+
 int display_present_latest(AppState *app){
     SDL_Rect rect;
     void *pixels = NULL;
@@ -83,14 +112,56 @@ int display_present_latest(AppState *app){
     SDL_UnlockTexture(app->texture);
     SDL_UnlockMutex(app->latest.mutex);
 
-    rect.x = 0;
-    rect.y = 0;
-    rect.w = app->width;
-    rect.h = app->height;
+    calculate_display_rect(app,&rect);
 
     SDL_RenderClear(app->renderer);
     SDL_RenderCopy(app->renderer,app->texture,NULL,&rect);
     SDL_RenderPresent(app->renderer);
+
+    return 0;
+}
+
+int display_save_latest_ppm(AppState *app,const char* filename){
+    FILE *fp = NULL;
+    
+    if(!app || !app->latest.rgb || !filename){
+        return -1;
+    }
+
+    SDL_LockMutex(app->latest.mutex);
+
+    if(app->latest.frame_id == 0){
+        SDL_UnlockMutex(app->latest.mutex);
+        return -1;
+    }
+
+    fp = fopen(filename,"wb");
+    if(!fp){
+        SDL_UnlockMutex(app->latest.mutex);
+        perror("fopen");
+        return -1;
+    }
+
+    fprintf(fp,"P6\n%d %d\n255\n",app->latest.width,app->latest.height);
+
+    for (int y = 0; y < app->latest.height; y++)
+    {
+        if(fwrite(
+            app->latest.rgb + y*app->latest.width*3,
+            1,
+            app->latest.width*3,
+            fp)!=(size_t)app->latest.width*3){
+            perror("fwrite");
+            fclose(fp);
+            SDL_UnlockMutex(app->latest.mutex);
+            return -1;
+        }
+    }
+
+    fclose(fp);
+    SDL_UnlockMutex(app->latest.mutex);
+
+    printf("已保存截图：%s\n",filename);
 
     return 0;
 }
