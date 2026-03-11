@@ -19,6 +19,19 @@ typedef struct SharedFrame{
     SDL_mutex *mutex;
 }SharedFrame;
 
+#define MAX_CONTROLS 128
+
+typedef struct{
+    uint32_t id;
+    char name[64];
+    int type;
+
+    int min;
+    int max;
+    int step;
+    int def;
+}CameraControl;
+
 typedef struct AppState{
     char device_path[256];
     int fd;
@@ -36,6 +49,10 @@ typedef struct AppState{
 
     SDL_Thread *capture_tid;
     SharedFrame latest;
+
+    CameraControl controls[MAX_CONTROLS];
+    int control_count;
+    int current_control;
 
     int quit;
     int paused;

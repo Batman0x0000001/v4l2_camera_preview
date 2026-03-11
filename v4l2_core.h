@@ -33,6 +33,11 @@ int set_control_value(AppState *app,uint32_t id,int32_t value);
 int query_control_info(AppState *app,uint32_t id,struct v4l2_queryctrl *out);
 int enum_control_menu(AppState *app,struct v4l2_queryctrl *qctrl);
 
+int scan_controls(AppState *app);
+void print_controls(AppState *app);
+int get_control_by_index(AppState *app,int index,int *value);
+int set_control_by_index(AppState *app,int index,int value);
+
 void cleanup(AppState *app);
 
 #endif

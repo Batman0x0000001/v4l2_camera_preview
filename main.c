@@ -3,6 +3,24 @@
 #include"v4l2_core.h"
 #include"display.h"
 
+static void print_control_status(const char *name, int value) {
+    static char last_name[32] = "";
+    static int  last_value    = 0;
+
+    // 内容没变化，直接返回，不打印
+    if (last_value == value && strcmp(last_name, name) == 0) {
+        return;
+    }
+
+    // 内容变了，更新缓存并打印
+    strncpy(last_name, name, sizeof(last_name) - 1);
+    last_value = value;
+
+    printf("\r%-60s", "");
+    printf("\rControl: %-20s = %-6d", name, value);
+    fflush(stdout);//每次 fflush 都要从用户态切换到内核态。
+}
+
 int main(int argc, char const *argv[])
 {
     AppState app;
@@ -58,14 +76,6 @@ int main(int argc, char const *argv[])
         return 1;     
     }
 
-    int32_t value =0;
-
-    if(get_control_value(&app,V4L2_CID_BRIGHTNESS,&value) == 0){
-        printf("当前的亮度为:%d\n",value);
-    }else{
-        printf("当前设备不支持读取亮度\n");
-    }
-
     if (set_format(&app) < 0) {
         cleanup(&app);
         SDL_Quit();
@@ -104,6 +114,9 @@ int main(int argc, char const *argv[])
         SDL_Quit();
         return 1;
     }
+
+    scan_controls(&app);
+    print_controls(&app);
 
     printf("运行中:Space 暂停/继续,[/] 调整亮度,ESC 退出\n");
 
@@ -165,12 +178,55 @@ int main(int argc, char const *argv[])
                                 value = 0;
 
                             if (set_control_value(&app,V4L2_CID_POWER_LINE_FREQUENCY,value) == 0) {
-                                printf("Power Line Frequency mode -> %d\n",
-                                        value);
+                                printf("Power Line Frequency mode -> %d\n",value);
                             }
                         }
                         break;
                     }
+                case SDLK_LEFT:
+                    {
+                        CameraControl *c = &app.controls[app.current_control];
+                        int value;
+
+                        if(get_control_by_index(&app,app.current_control,&value) == 0){
+                            value -= c->step ? c->step : 1;
+
+                            if(value < c->min){
+                                value = c->min;
+                            }
+
+                            set_control_by_index(&app,app.current_control,value);
+                        }
+                        break;
+                    }
+                case SDLK_RIGHT:
+                    {
+                        CameraControl *c = &app.controls[app.current_control];
+                        int value;
+
+                        if(get_control_by_index(&app,app.current_control,&value) == 0){
+                            value += c->step ? c->step : 1;
+
+                            if(value > c->max){
+                                value = c->max;
+                            }
+
+                            set_control_by_index(&app,app.current_control,value);
+                        }
+                        break;
+                    }
+                case SDLK_UP:
+                    app.current_control++;
+                    if(app.current_control > app.control_count){
+                        app.current_control = 0;
+                    }
+                    break;
+                case SDLK_DOWN:
+                    app.current_control--;
+                    if(app.current_control < 0){
+                        app.current_control = app.control_count - 1;
+                    }
+                    break;
                 case SDLK_ESCAPE:
                     app.quit = 1;
                     break;
@@ -189,20 +245,22 @@ int main(int argc, char const *argv[])
             break;
         }
 
+        CameraControl *c = &app.controls[app.current_control];
+        int value;
+        /*
+            或者直接调用get_control_value(&app, app->controls[index].id, &value) or
+            get_control_value(&app, c->id, &value)
+        */
+        if(get_control_by_index(&app,app.current_control,&value) == 0){
+            print_control_status(c->name,value);
+        }
+
         SDL_Delay(5);
     }
 
-    printf("开始 display_destroy\n");
     display_destroy(&app);
-    printf("完成 display_destroy\n");
-
-    printf("开始 cleanup\n");
     cleanup(&app);
-    printf("完成 cleanup\n");
-
-    printf("开始 SDL_Quit\n");
     SDL_Quit();
-    printf("完成 SDL_Quit\n");
 
     return 0;
 }

@@ -795,6 +795,27 @@ int enum_controls(AppState *app){
 }
 
 int get_control_value(AppState *app,uint32_t id,int32_t *value){
+    /*
+        v4l2_queryctrl  // 描述控制项的"元信息"，用 VIDIOC_QUERYCTRL
+        v4l2_control    // 读写控制项的"当前值"，用 VIDIOC_G_CTRL / VIDIOC_S_CTRL
+
+        struct v4l2_queryctrl {
+            __u32 id;            // 控制项ID
+            __u32 type;          // 类型（INTEGER/BOOLEAN/MENU...）
+            __u8  name[32];      // 名称 "Brightness"
+            __s32 minimum;       // 最小值
+            __s32 maximum;       // 最大值
+            __s32 step;          // 步长
+            __s32 default_value; // 默认值
+            __u32 flags;         // 标志位
+            __u32 reserved[2];   // 保留
+        };
+
+        struct v4l2_control {
+            __u32 id;            // 控制项ID
+            __s32 value;         // 当前值
+        };
+    */
     struct v4l2_control ctrl;
 
     if(!value){
@@ -865,6 +886,85 @@ int enum_control_menu(AppState *app,struct v4l2_queryctrl *qctrl){
     }
 
     return 0;
+}
+
+int scan_controls(AppState *app){
+    struct v4l2_queryctrl qctrl;
+
+    memset(&qctrl,0,sizeof(struct v4l2_queryctrl));
+    qctrl.id = V4L2_CTRL_FLAG_NEXT_CTRL;// 初始值，表示"给我第一个"
+
+    app->control_count = 0;
+
+    while(xioctl(app->fd,VIDIOC_QUERYCTRL,&qctrl) == 0){
+        if(app->control_count >= MAX_CONTROLS){
+                break;
+        }
+        /*
+            同时过滤 DISABLED 和 CTRL_CLASS
+                遇到CTRL_CLASS时，return get_control_value会报错
+            flags 是一个位掩码，每一位代表一种属性，可以同时拥有多个标志。
+                用 & 按位与来检测某个标志是否存在
+        */
+        if(!(qctrl.flags & V4L2_CTRL_FLAG_DISABLED)&&
+              qctrl.type != V4L2_CTRL_TYPE_CTRL_CLASS){
+            //编译器会为整个结构体一次性分配所有成员的内存，包括里面的 controls 数组：
+            CameraControl *c = &app->controls[app->control_count];
+
+            c->id = qctrl.id;//控制项的唯一ID，如 V4L2_CID_BRIGHTNESS
+
+            snprintf(c->name, sizeof(c->name), "%s", qctrl.name);
+            c->type = qctrl.type;
+            c->min = qctrl.minimum;
+            c->max = qctrl.maximum;
+            c->step = qctrl.step;
+            c->def = qctrl.default_value;
+
+            app->control_count++;
+
+        }
+
+        qctrl.id |= V4L2_CTRL_FLAG_NEXT_CTRL;//在当前id基础上加标志，表示"给我下一个"
+    }
+
+    if(app->control_count == 0){
+        return -1;
+    }
+
+    printf("发现%d个controls\n",app->control_count);
+
+    return 0;
+}
+
+void print_controls(AppState *app){
+    printf("\n=== Camera Controls ===\n");
+
+    for(int i=0;i<app->control_count;i++)
+    {
+        CameraControl *c=&app->controls[i];
+
+        printf("[%d] %s  (%d ~ %d)\n",
+               i,
+               c->name,
+               c->min,
+               c->max);
+    }
+
+    printf("=======================\n");
+}
+
+int get_control_by_index(AppState *app,int index,int *value){
+    if(index >= app->control_count){
+        return -1;
+    }
+    return get_control_value(app,app->controls[index].id,value);
+}
+
+int set_control_by_index(AppState *app,int index,int value){
+    if(index >= app->control_count){
+        return -1;
+    }
+    return set_control_value(app,app->controls[index].id,value);
 }
 
 void cleanup(AppState *app){
