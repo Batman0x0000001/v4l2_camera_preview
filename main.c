@@ -52,6 +52,20 @@ int main(int argc, char const *argv[])
         return 1;
     }
 
+    if(enum_controls(&app) < 0){
+        cleanup(&app);
+        SDL_Quit();
+        return 1;     
+    }
+
+    int32_t value =0;
+
+    if(get_control_value(&app,V4L2_CID_BRIGHTNESS,&value) == 0){
+        printf("当前的亮度为:%d\n",value);
+    }else{
+        printf("当前设备不支持读取亮度\n");
+    }
+
     if (set_format(&app) < 0) {
         cleanup(&app);
         SDL_Quit();
@@ -91,7 +105,7 @@ int main(int argc, char const *argv[])
         return 1;
     }
 
-    printf("运行中:Space 暂停/继续,ESC 退出\n");
+    printf("运行中:Space 暂停/继续,[/] 调整亮度,ESC 退出\n");
 
     while(!app.quit){
         while(SDL_PollEvent(&event)){
@@ -106,6 +120,36 @@ int main(int argc, char const *argv[])
                         fprintf(stderr,"截屏失败\n");
                     }
                     break;
+                case SDLK_LEFTBRACKET:
+                    {struct v4l2_queryctrl qctrl;
+                    int32_t value;
+
+                    if(query_control_info(&app,V4L2_CID_BRIGHTNESS,&qctrl) == 0 &&
+                        get_control_value(&app,V4L2_CID_BRIGHTNESS,&value) == 0){
+                        value -=qctrl.step ? qctrl.step : 1;
+                        if(value < qctrl.minimum){
+                            value = qctrl.minimum;
+                        }
+                        if(set_control_value(&app,V4L2_CID_BRIGHTNESS,value) == 0){
+                            printf("亮度调整为:%d\n",value);
+                        }
+                    }
+                    break;}
+                case SDLK_RIGHTBRACKET:
+                    {struct v4l2_queryctrl qctrl;
+                    int32_t value;
+
+                    if(query_control_info(&app,V4L2_CID_BRIGHTNESS,&qctrl) == 0 &&
+                        get_control_value(&app,V4L2_CID_BRIGHTNESS,&value) == 0){
+                        value +=qctrl.step ? qctrl.step : 1;
+                        if(value > qctrl.maximum){
+                            value = qctrl.maximum;
+                        }
+                        if(set_control_value(&app,V4L2_CID_BRIGHTNESS,value) == 0){
+                            printf("亮度调整为:%d\n",value);
+                        }
+                    }
+                    break;}
                 case SDLK_ESCAPE:
                     app.quit = 1;
                     break;

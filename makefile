@@ -21,7 +21,7 @@ $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) $(PKG_CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJS) $(TARGET) frame.raw frame.ppm
+	rm -f $(OBJS) $(TARGET)
 
 run: $(TARGET)
 	./$(TARGET)

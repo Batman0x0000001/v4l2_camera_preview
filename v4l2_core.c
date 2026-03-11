@@ -733,6 +733,128 @@ int capture_start_thread(AppState *app){
     return 0;
 }
 
+static const char *ctrl_type_name(__u32 type){
+    switch (type) {
+        case V4L2_CTRL_TYPE_INTEGER:
+            return "INTEGER";
+        case V4L2_CTRL_TYPE_BOOLEAN:
+            return "BOOLEAN";
+        case V4L2_CTRL_TYPE_MENU:
+            return "MENU";
+        case V4L2_CTRL_TYPE_BUTTON:
+            return "BUTTON";
+        case V4L2_CTRL_TYPE_INTEGER64:
+            return "INTEGER64";
+        case V4L2_CTRL_TYPE_CTRL_CLASS:
+            return "CTRL_CLASS";
+        case V4L2_CTRL_TYPE_STRING:
+            return "STRING";
+        case V4L2_CTRL_TYPE_BITMASK:
+            return "BITMASK";
+        case V4L2_CTRL_TYPE_INTEGER_MENU:
+            return "INTEGER_MENU";
+        default:
+            return "OTHER";
+    }
+}
+
+int enum_controls(AppState *app){
+    struct v4l2_queryctrl qctrl;
+
+    memset(&qctrl,0,sizeof(struct v4l2_queryctrl));
+    qctrl.id = V4L2_CTRL_FLAG_NEXT_CTRL;
+
+    printf("设备支持的V4L2 controls:\n");
+
+    while (xioctl(app->fd,VIDIOC_QUERYCTRL,&qctrl) == 0)
+    {
+        if(!(qctrl.flags & V4L2_CTRL_FLAG_DISABLED)){
+            printf("id=0x%08x name=%s type=%s min=%d max=%d step=%d default=%d flags=0x%x\n",
+                   qctrl.id,
+                   qctrl.name,
+                   ctrl_type_name(qctrl.type),
+                   qctrl.minimum,
+                   qctrl.maximum,
+                   qctrl.step,
+                   qctrl.default_value,
+                   qctrl.flags);
+        }
+        qctrl.id |= V4L2_CTRL_FLAG_NEXT_CTRL;
+    }
+
+    if(errno != EINVAL){
+        perror("VIDIOC_QUERYCTRL");
+        return -1;
+    }
+    
+    return 0;
+}
+
+int get_control_value(AppState *app,uint32_t id,int32_t *value){
+    struct v4l2_control ctrl;
+
+    if(!value){
+        return -1;
+    }
+
+    memset(&ctrl,0,sizeof(struct v4l2_control));
+    ctrl.id = id;
+
+    if(xioctl(app->fd,VIDIOC_G_CTRL,&ctrl) < 0){
+        perror("VIDIOC_G_CTRL");
+        return -1;
+    }
+
+    *value = ctrl.value;
+
+    return 0;
+}
+
+int set_control_value(AppState *app,uint32_t id,int32_t value){
+    struct v4l2_control ctrl;
+
+    memset(&ctrl,0,sizeof(struct v4l2_control));
+    ctrl.id = id;
+    ctrl.value = value;
+
+    if(xioctl(app->fd,VIDIOC_S_CTRL,&ctrl) < 0){
+        perror("VIDIOC_S_CTRL");
+        return -1;
+    }
+
+    return 0;
+}
+
+static void demo_brightness_control(AppState *app){
+    int32_t value =0;
+
+    if(get_control_value(app,V4L2_CID_BRIGHTNESS,&value) == 0){
+        printf("当前的亮度为:%d\n",value);
+    }else{
+        printf("当前设备不支持读取亮度\n");
+    }
+}
+
+int query_control_info(AppState *app,uint32_t id,struct v4l2_queryctrl *out){
+    if(!out){
+        return -1;
+    }
+
+    memset(out,0,sizeof(struct v4l2_queryctrl));
+    out->id = id;
+
+    if(xioctl(app->fd,VIDIOC_QUERYCTRL,out)){
+        perror("VIDIOC_QUERYCTRL");
+        return -1;
+    }
+
+    if(out->flags & V4L2_CTRL_FLAG_DISABLED){
+        return -1;
+    }
+
+    return 0;
+}
+
 void cleanup(AppState *app){
     app->quit = 1;
 

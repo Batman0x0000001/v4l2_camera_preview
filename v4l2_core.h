@@ -26,6 +26,12 @@ int capture_one_frame_as_ppm(AppState *app,const char *output_path);
 int init_shared_frame(AppState *app);
 int capture_start_thread(AppState *app);
 
+int enum_controls(AppState *app);
+int get_control_value(AppState *app,uint32_t id,int32_t *value);
+int set_control_value(AppState *app,uint32_t id,int32_t value);
+
+int query_control_info(AppState *app,uint32_t id,struct v4l2_queryctrl *out);
+
 void cleanup(AppState *app);
 
 #endif
