@@ -10,6 +10,15 @@ typedef struct Buffer{
     size_t length;
 }Buffer;
 
+typedef struct SharedFrame{
+    unsigned char *rgb;
+    int width;
+    int height;
+    size_t bytes;
+    uint64_t frame_id;
+    SDL_mutex *mutex;
+}SharedFrame;
+
 typedef struct AppState{
     char device_path[256];
     int fd;
@@ -26,6 +35,7 @@ typedef struct AppState{
     SDL_Texture *texture;
 
     SDL_Thread *capture_tid;
+    SharedFrame latest;
 
     int quit;
     int paused;

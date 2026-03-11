@@ -3,7 +3,8 @@ CC := gcc
 TARGET := v4l2_camera_preview
 
 SRCS := main.c \
-        v4l2_core.c
+        v4l2_core.c \
+		display.c
 
 OBJS := $(SRCS:.c=.o)
 

@@ -35,6 +35,14 @@ void app_state_init(AppState *app,const char *device_path){
     app->width = 640;
     app->height = 480;
     app->pixfmt = V4L2_PIX_FMT_YUYV;
+
+    app->latest.rgb = NULL;
+    app->latest.width = 0;
+    app->latest.height = 0;
+    app->latest.bytes = 0;
+    app->latest.frame_id = 0;
+    app->latest.mutex = NULL;
+
 }
 
 int open_device(AppState *app){
@@ -628,9 +636,121 @@ int capture_one_frame_as_ppm(AppState *app,const char *output_path){
     return 0;
 }
 
+int init_shared_frame(AppState *app){
+    app->latest.width = app->width;
+    app->latest.height = app->height;
+    app->latest.bytes = (size_t)app->width * app->height *3;
+
+    app->latest.rgb = malloc(app->latest.bytes);
+    if(!app->latest.rgb){
+        perror("malloc");
+        return -1;
+    }
+
+    memset(app->latest.rgb,0,sizeof(app->latest.bytes));
+
+    app->latest.mutex = SDL_CreateMutex();
+    if(!app->latest.mutex){
+        fprintf(stderr, "SDL_CreateMutex failed:%s\n",SDL_GetError());
+        return -1;
+    }
+
+    return 0;
+}
+
+static int capture_thread(void *userdate){
+    AppState *app = (AppState *)userdate;
+
+    while(!app->quit){
+        fd_set fds;
+        struct timeval tv;
+        int ret;
+
+        FD_ZERO(&fds);
+        FD_SET(app->fd,&fds);
+
+        tv.tv_sec = 2;
+        tv.tv_usec = 0;
+
+        ret = select(app->fd+1,&fds,NULL,NULL,&tv);
+        if(ret < 0){
+            if(errno == EINTR){
+                continue;
+            }
+            perror("select");
+            return -1;
+        }
+
+        if(ret == 0){
+            fprintf(stderr, "select timeout\n");
+            return -1;
+        }
+
+        {   //作用：创建一个独立的作用域
+            struct v4l2_buffer buf;
+
+            memset(&buf,0,sizeof(struct v4l2_buffer));
+            buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+            buf.memory = V4L2_MEMORY_MMAP;
+
+            if(xioctl(app->fd,VIDIOC_DQBUF,&buf) < 0){
+                if(errno == EAGAIN){
+                    continue;
+                }
+                perror("VIDIOC_DQBUF");
+                break;
+            }
+
+            if(!app->paused){
+                SDL_LockMutex(app->latest.mutex);
+
+                yuyv_to_rgb24(
+                    (const unsigned char *)app->buffers[buf.index].start,
+                    app->latest.rgb,
+                    app->width,
+                    app->height);
+                app->latest.frame_id++;
+
+                SDL_UnlockMutex(app->latest.mutex);
+            }
+
+            if(xioctl(app->fd,VIDIOC_QBUF,&buf) < 0){
+                perror("VIDIOC_QBUF");
+                break;
+            }
+        }
+    }
+    return 0;
+}
+
+int capture_start_thread(AppState *app){
+    app->capture_tid = SDL_CreateThread(capture_thread,"capture_thread",app);
+    if(!app->capture_tid){
+        fprintf(stderr, "SDL_CreateThread failed:%s\n", SDL_GetError());
+        return -1;
+    }
+
+    return 0;
+}
+
 void cleanup(AppState *app){
+    app->quit = 1;
+
+    if(app->capture_tid){
+        SDL_WaitThread(app->capture_tid,NULL);
+        app->capture_tid = NULL;
+    }
+
     stop_capturing(app);
     uninit_mmap(app);
+
+    if(app->latest.mutex){
+        SDL_DestroyMutex(app->latest.mutex);
+        app->latest.mutex = NULL;
+    }
+
+    free(app->latest.rgb);
+    app->latest.rgb = NULL;
 
     if(app->fd > 0){
         close(app->fd);

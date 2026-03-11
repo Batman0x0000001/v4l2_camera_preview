@@ -23,6 +23,9 @@ void uninit_mmap(AppState *app);
 int capture_one_frame(AppState *app,const char *output_path);
 int capture_one_frame_as_ppm(AppState *app,const char *output_path);
 
+int init_shared_frame(AppState *app);
+int capture_start_thread(AppState *app);
+
 void cleanup(AppState *app);
 
 #endif
