@@ -97,6 +97,7 @@ static int stream_init_buffers(AppState *app){
 
 static int stream_init_output(AppState *app){
     int ret;
+    AVDictionary *opts = NULL;
 
     ret = avformat_alloc_output_context2(
         &app->stream.ofmt_ctx,
@@ -123,17 +124,20 @@ static int stream_init_output(AppState *app){
         return -1;
     }
 
-    av_opt_set(app->stream.ofmt_ctx->priv_data,"rtsp_transport","tcp",0);
+    // av_opt_set(app->stream.ofmt_ctx->priv_data,"rtsp_transport","tcp",0);
 
-    ret = avio_open2(
-        &app->stream.ofmt_ctx->pb,
-        app->stream.output_url,
-        AVIO_FLAG_WRITE,
-        NULL,NULL);
-    if(ret < 0){
-        fprintf(stderr, "avio_open2 failed\n");
-        return -1;
-    }
+    // ret = avio_open2(
+    //     &app->stream.ofmt_ctx->pb,
+    //     app->stream.output_url,
+    //     AVIO_FLAG_WRITE,
+    //     NULL,NULL);
+    // if(ret < 0){
+    //     fprintf(stderr, "avio_open2 failed\n");
+    //     return -1;
+    // }
+
+    av_dict_set(&opts, "rtsp_transport", "tcp", 0);
+    //RTSP 推流不应该用 avio_open2 直接连接，应该用 avformat_write_header 配合 AVDictionary 设置传输参数。
 
     ret = avformat_write_header(app->stream.ofmt_ctx,NULL);
     if(ret < 0){
@@ -158,6 +162,47 @@ int stream_init(AppState *app){
     app->stream.enabled = 1;
     
     return 0;
+}
+
+static int stream_write_one_packet(AppState *app){
+    int ret;
+
+    while(1){
+        ret = avcodec_receive_packet(app->stream.enc_ctx,app->stream.pkt);
+        if(ret == AVERROR(EAGAIN) || ret == AVERROR_EOF){
+            return 0;
+        }
+        if(ret < 0){
+            return -1;
+        }
+
+        av_packet_rescale_ts(app->stream.pkt,app->stream.enc_ctx->time_base,app->stream.video_st->time_base);
+        app->stream.pkt->stream_index = app->stream.video_st->index;
+
+        ret = av_interleaved_write_frame(app->stream.ofmt_ctx,app->stream.pkt);
+        av_packet_unref(app->stream.pkt);
+
+        if(ret < 0){
+            return -1;
+        }
+
+        return 0;
+    }
+}
+
+static void stream_flush_encoder(AppState *app){
+    int ret;
+
+    if(!app->stream.enc_ctx || !app->stream.ofmt_ctx){
+        return;
+    }
+
+    ret = avcodec_send_frame(app->stream.enc_ctx,NULL);
+    if(ret < 0){
+        return;
+    }
+
+    (void)stream_write_one_packet(app);
 }
 
 int stream_push_rgb_frame(AppState *app,const unsigned char *rgb){
@@ -196,39 +241,28 @@ int stream_push_rgb_frame(AppState *app,const unsigned char *rgb){
         return -1;
     }
 
-    while(ret >= 0){
-        ret = avcodec_receive_packet(app->stream.enc_ctx,app->stream.pkt);
-        if(ret == AVERROR(EAGAIN) || ret == AVERROR_EOF){
-            break;
-        }else if (ret < 0)
-        {
-            SDL_UnlockMutex(app->stream.mutex);
-            return -1;
-        }
+    ret = stream_write_one_packet(app);
+    SDL_UnlockMutex(app->stream.mutex);
 
-        av_packet_rescale_ts(app->stream.pkt,app->stream.enc_ctx->time_base,app->stream.video_st->time_base);
-
-        app->stream.pkt->stream_index = app->stream.video_st->index;
-
-        ret = av_interleaved_write_frame(app->stream.ofmt_ctx,app->stream.pkt);
-        av_packet_unref(app->stream.pkt);
-
-        if(ret < 0){
-            SDL_UnlockMutex(app->stream.mutex);
-            return -1;
-        }
+    if(ret < 0){
+        return -1;
     }
 
-    SDL_UnlockMutex(app->stream.mutex);
     return 0;
 }
+
 void stream_close(AppState *app)
 {
-    if (app->stream.ofmt_ctx) {
-        av_write_trailer(app->stream.ofmt_ctx);
+    if (app->stream.enabled) {
+        SDL_LockMutex(app->stream.mutex);
+        stream_flush_encoder(app);
+        SDL_UnlockMutex(app->stream.mutex);
     }
 
-    if (app->stream.ofmt_ctx && app->stream.ofmt_ctx->pb) {
+    if (app->stream.ofmt_ctx &&
+        !(app->stream.ofmt_ctx->oformat->flags & AVFMT_NOFILE) &&
+        app->stream.ofmt_ctx->pb) {
+        av_write_trailer(app->stream.ofmt_ctx);
         avio_closep(&app->stream.ofmt_ctx->pb);
     }
 

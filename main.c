@@ -34,12 +34,6 @@ int main(int argc, char const *argv[])
 
     app_state_init(&app,device);
     stream_state_init(&app,"rtsp://127.0.0.1:8554/cam",25);
-    if(stream_init(&app)<0){
-        fprintf(stderr, "stream_init failed\n");
-        return -1;
-    }else{
-        printf("stream_init success\n");
-    }
 
     if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0){
         fprintf(stderr, "SDL_Init failed:%s\n",SDL_GetError());
@@ -116,6 +110,14 @@ int main(int argc, char const *argv[])
         return 1;
     }
 
+    if (stream_init(&app) < 0) {
+        fprintf(stderr, "RTSP 推流初始化失败\n");
+        display_destroy(&app);
+        cleanup(&app);
+        SDL_Quit();
+        return 1;
+    }
+
     if(capture_start_thread(&app) < 0){
         display_destroy(&app);
         cleanup(&app);
@@ -127,6 +129,7 @@ int main(int argc, char const *argv[])
     print_controls(&app);
 
     printf("运行中:Space 暂停/继续,[/] 调整亮度,ESC 退出\n");
+    printf("推流地址：%s\n",app.stream.output_url);
 
     while(!app.quit){
         while(SDL_PollEvent(&event)){

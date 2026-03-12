@@ -7,6 +7,7 @@
 #include<sys/mman.h>
 #include"app.h"
 #include"v4l2_core.h"
+#include"stream.h"
 
 /*
     在 V4L2 中几乎所有操作都通过它完成
@@ -409,8 +410,8 @@ int capture_one_frame(AppState *app,const char *output_path){
         FD_ZERO(&fds);// 清空监听集合
         FD_SET(app->fd,&fds);// 把摄像头fd加入监听
 
-        tv.tv_sec = 2;// 超时时间：2秒
-        tv.tv_usec = 0;
+        tv.tv_sec = 2;//秒 超时时间：2秒
+        tv.tv_usec = 0;//微秒，不足1秒的剩余部分，用微秒表示
 
 
         /*
@@ -669,8 +670,8 @@ static int capture_thread(void *userdate){
         FD_ZERO(&fds);
         FD_SET(app->fd,&fds);
 
-        tv.tv_sec = 2;
-        tv.tv_usec = 0;
+        tv.tv_sec = 0;
+        tv.tv_usec = 200000;//200ms
 
         ret = select(app->fd+1,&fds,NULL,NULL,&tv);
         if(ret < 0){
@@ -682,8 +683,7 @@ static int capture_thread(void *userdate){
         }
 
         if(ret == 0){
-            fprintf(stderr, "select timeout\n");
-            return -1;
+            continue;
         }
 
         {   //作用：创建一个独立的作用域
@@ -710,6 +710,12 @@ static int capture_thread(void *userdate){
                     app->width,
                     app->height);
                 app->latest.frame_id++;
+
+                if(app->stream.enabled){
+                    if(stream_push_rgb_frame(app,app->latest.rgb) < 0){
+                        fprintf(stderr, "stream_push_rgb_frame failed\n");
+                    }
+                }
 
                 SDL_UnlockMutex(app->latest.mutex);
             }
@@ -975,6 +981,8 @@ void cleanup(AppState *app){
         app->capture_tid = NULL;
     }
 
+    stream_close(app);
+
     stop_capturing(app);
     uninit_mmap(app);
 
@@ -985,6 +993,8 @@ void cleanup(AppState *app){
 
     free(app->latest.rgb);
     app->latest.rgb = NULL;
+    app->latest.bytes = 0;
+    app->latest.frame_id = 0;
 
     if(app->fd > 0){
         close(app->fd);
