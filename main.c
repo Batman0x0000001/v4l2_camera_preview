@@ -2,6 +2,7 @@
 #include"app.h"
 #include"v4l2_core.h"
 #include"display.h"
+#include"stream.h"
 
 static void print_control_status(const char *name, int value) {
     static char last_name[32] = "";
@@ -32,6 +33,13 @@ int main(int argc, char const *argv[])
     }
 
     app_state_init(&app,device);
+    stream_state_init(&app,"rtsp://127.0.0.1:8554/cam",25);
+    if(stream_init(&app)<0){
+        fprintf(stderr, "stream_init failed\n");
+        return -1;
+    }else{
+        printf("stream_init success\n");
+    }
 
     if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0){
         fprintf(stderr, "SDL_Init failed:%s\n",SDL_GetError());

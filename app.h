@@ -4,6 +4,12 @@
 #include<stdint.h>
 #include<linux/videodev2.h>
 #include<SDL2/SDL.h>
+#include <libavformat/avformat.h>
+#include <libavcodec/avcodec.h>
+#include <libswscale/swscale.h>
+#include <libavutil/frame.h>
+#include <libavutil/opt.h>
+#include <libavutil/imgutils.h>
 
 typedef struct Buffer{
     void *start;
@@ -32,6 +38,26 @@ typedef struct{
     int def;
 }CameraControl;
 
+typedef struct StreamState{
+    char output_url[512];
+
+    const AVCodec *encoder;
+    AVCodecContext *enc_ctx;
+    AVFormatContext *ofmt_ctx;
+    AVStream *video_st;
+
+    struct SwsContext *sws_ctx;
+
+    AVFrame *yuv_frame;
+    AVPacket *pkt;
+
+    int fps;
+    int64_t frame_index;
+
+    SDL_mutex *mutex;
+    int enabled;
+}StreamState;
+
 typedef struct AppState{
     char device_path[256];
     int fd;
@@ -53,6 +79,8 @@ typedef struct AppState{
     CameraControl controls[MAX_CONTROLS];
     int control_count;
     int current_control;
+
+    StreamState stream;
 
     int quit;
     int paused;

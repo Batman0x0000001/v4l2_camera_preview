@@ -1,0 +1,263 @@
+#include<stdio.h>
+#include<string.h>
+#include"stream.h"
+
+void stream_state_init(AppState *app,const char *url,int fps){
+    snprintf(app->stream.output_url,sizeof(app->stream.output_url),"%s",url);
+    app->stream.fps = fps > 0 ? fps : 25;
+    app->stream.frame_index = 0;
+    app->stream.enabled = 0;
+    app->stream.mutex = NULL;
+}
+
+static int stream_init_encoder(AppState *app){
+    int ret;
+
+    app->stream.encoder = avcodec_find_encoder(AV_CODEC_ID_H264);
+    if(!app->stream.encoder){
+        fprintf(stderr, "avcodec_find_encoder failed\n");
+        return -1;
+    }
+
+    app->stream.enc_ctx = avcodec_alloc_context3(app->stream.encoder);
+    if(!app->stream.enc_ctx){
+        fprintf(stderr, "avcodec_alloc_context3 failed\n");
+        return -1;
+    }
+
+    app->stream.enc_ctx->codec_type = AVMEDIA_TYPE_VIDEO;
+    app->stream.enc_ctx->width = app->width;
+    app->stream.enc_ctx->height = app->height;
+    app->stream.enc_ctx->pix_fmt = AV_PIX_FMT_YUV420P;
+    app->stream.enc_ctx->time_base = (AVRational){1, app->stream.fps};
+    app->stream.enc_ctx->framerate = (AVRational){app->stream.fps, 1};
+    app->stream.enc_ctx->gop_size = app->stream.fps;
+    app->stream.enc_ctx->max_b_frames = 0;
+    app->stream.enc_ctx->bit_rate = 1000000;
+
+    av_opt_set(app->stream.enc_ctx->priv_data,"preset","veryfast",0);
+    av_opt_set(app->stream.enc_ctx->priv_data,"tune","zerolatency",0);
+
+    ret = avcodec_open2(app->stream.enc_ctx,app->stream.encoder,NULL);
+    if(ret < 0){
+        fprintf(stderr, "avcodec_open2 failed\n");
+        return -1;
+    }
+
+    return 0;
+}
+
+static int stream_init_buffers(AppState *app){
+    int ret;
+
+    app->stream.sws_ctx = sws_getContext(
+        app->width,
+        app->height,
+        AV_PIX_FMT_RGB24,
+        app->width,
+        app->height,
+        AV_PIX_FMT_YUV420P,
+        SWS_BILINEAR,
+        NULL,NULL,NULL);
+    if(!app->stream.sws_ctx){
+        fprintf(stderr, "sws_getContext failed\n");
+        return -1;
+    }
+
+    app->stream.yuv_frame = av_frame_alloc();
+    if(!app->stream.yuv_frame){
+        fprintf(stderr, "av_frame_alloc failed\n");
+        return -1;
+    }
+
+    app->stream.yuv_frame->format = AV_PIX_FMT_YUV420P;
+    app->stream.yuv_frame->width = app->width;
+    app->stream.yuv_frame->height = app->height;
+
+    ret = av_frame_get_buffer(app->stream.yuv_frame,32);
+    if(ret < 0){
+        fprintf(stderr, "av_frame_get_buffer failed\n");
+        return -1;
+    }
+
+    app->stream.pkt = av_packet_alloc();
+    if(!app->stream.pkt){
+        fprintf(stderr, "av_packet_alloc failed\n");
+        return -1;
+    }
+
+    app->stream.mutex = SDL_CreateMutex();
+    if(!app->stream.mutex){
+        fprintf(stderr, "SDL_CreateMutex failed\n");
+        return -1;
+    }
+
+    return 0;
+}
+
+static int stream_init_output(AppState *app){
+    int ret;
+
+    ret = avformat_alloc_output_context2(
+        &app->stream.ofmt_ctx,
+        NULL,
+        "rtsp",
+        app->stream.output_url);
+    if(ret < 0 || !app->stream.ofmt_ctx){
+        fprintf(stderr, "avformat_alloc_output_context2 failed\n");
+        return -1;
+    }
+
+    app->stream.video_st = avformat_new_stream(app->stream.ofmt_ctx,NULL);
+    if(!app->stream.video_st){
+        fprintf(stderr, "avformat_new_stream failed\n");
+        return -1;
+    }
+
+    app->stream.video_st->time_base = app->stream.enc_ctx->time_base;
+
+    ret = avcodec_parameters_from_context(app->stream.video_st->codecpar,app->stream.enc_ctx);
+
+    if(ret < 0){
+        fprintf(stderr, "avcodec_parameters_from_context failed\n");
+        return -1;
+    }
+
+    av_opt_set(app->stream.ofmt_ctx->priv_data,"rtsp_transport","tcp",0);
+
+    ret = avio_open2(
+        &app->stream.ofmt_ctx->pb,
+        app->stream.output_url,
+        AVIO_FLAG_WRITE,
+        NULL,NULL);
+    if(ret < 0){
+        fprintf(stderr, "avio_open2 failed\n");
+        return -1;
+    }
+
+    ret = avformat_write_header(app->stream.ofmt_ctx,NULL);
+    if(ret < 0){
+        fprintf(stderr, "avformat_write_header failed\n");
+        return -1;
+    }
+    
+    return 0;
+}
+
+int stream_init(AppState *app){
+    if(stream_init_encoder(app) < 0){
+        return -1;
+    }
+    if(stream_init_buffers(app) < 0){
+        return -1;
+    }
+    if(stream_init_output(app) < 0){
+        return -1;
+    }
+
+    app->stream.enabled = 1;
+    
+    return 0;
+}
+
+int stream_push_rgb_frame(AppState *app,const unsigned char *rgb){
+    const uint8_t *src_slices[1];
+    int src_stride[1];
+    int ret;
+
+    if(!app->stream.enabled || !rgb){
+        return 0;
+    }
+
+    SDL_LockMutex(app->stream.mutex);
+
+    ret = av_frame_make_writable(app->stream.yuv_frame);
+    if(ret < 0){
+        SDL_UnlockMutex(app->stream.mutex);
+        return -1;
+    }
+
+    src_slices[0] = rgb;
+    src_stride[0] = app->width*3;
+
+    sws_scale(
+        app->stream.sws_ctx,
+        src_slices,src_stride,
+        0,
+        app->height,
+        app->stream.yuv_frame->data,
+        app->stream.yuv_frame->linesize);
+    
+    app->stream.yuv_frame->pts = app->stream.frame_index++;
+
+    ret = avcodec_send_frame(app->stream.enc_ctx,app->stream.yuv_frame);
+    if(ret < 0){
+        SDL_UnlockMutex(app->stream.mutex);
+        return -1;
+    }
+
+    while(ret >= 0){
+        ret = avcodec_receive_packet(app->stream.enc_ctx,app->stream.pkt);
+        if(ret == AVERROR(EAGAIN) || ret == AVERROR_EOF){
+            break;
+        }else if (ret < 0)
+        {
+            SDL_UnlockMutex(app->stream.mutex);
+            return -1;
+        }
+
+        av_packet_rescale_ts(app->stream.pkt,app->stream.enc_ctx->time_base,app->stream.video_st->time_base);
+
+        app->stream.pkt->stream_index = app->stream.video_st->index;
+
+        ret = av_interleaved_write_frame(app->stream.ofmt_ctx,app->stream.pkt);
+        av_packet_unref(app->stream.pkt);
+
+        if(ret < 0){
+            SDL_UnlockMutex(app->stream.mutex);
+            return -1;
+        }
+    }
+
+    SDL_UnlockMutex(app->stream.mutex);
+    return 0;
+}
+void stream_close(AppState *app)
+{
+    if (app->stream.ofmt_ctx) {
+        av_write_trailer(app->stream.ofmt_ctx);
+    }
+
+    if (app->stream.ofmt_ctx && app->stream.ofmt_ctx->pb) {
+        avio_closep(&app->stream.ofmt_ctx->pb);
+    }
+
+    if (app->stream.ofmt_ctx) {
+        avformat_free_context(app->stream.ofmt_ctx);
+        app->stream.ofmt_ctx = NULL;
+    }
+
+    if (app->stream.enc_ctx) {
+        avcodec_free_context(&app->stream.enc_ctx);
+    }
+
+    if (app->stream.yuv_frame) {
+        av_frame_free(&app->stream.yuv_frame);
+    }
+
+    if (app->stream.pkt) {
+        av_packet_free(&app->stream.pkt);
+    }
+
+    if (app->stream.sws_ctx) {
+        sws_freeContext(app->stream.sws_ctx);
+        app->stream.sws_ctx = NULL;
+    }
+
+    if (app->stream.mutex) {
+        SDL_DestroyMutex(app->stream.mutex);
+        app->stream.mutex = NULL;
+    }
+
+    app->stream.enabled = 0;
+}

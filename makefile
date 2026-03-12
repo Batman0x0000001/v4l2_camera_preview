@@ -4,13 +4,14 @@ TARGET := v4l2_camera_preview
 
 SRCS := main.c \
         v4l2_core.c \
-		display.c
+		display.c \
+		stream.c
 
 OBJS := $(SRCS:.c=.o)
 
 CFLAGS := -Wall -Wextra -O2 -g
-PKG_CFLAGS := $(shell pkg-config --cflags sdl2)
-PKG_LIBS := $(shell pkg-config --libs sdl2)
+PKG_CFLAGS := $(shell pkg-config --cflags sdl2 libavcodec libavformat libavutil libswscale)
+PKG_LIBS := $(shell pkg-config --libs sdl2 libavcodec libavformat libavutil libswscale)
 
 all: $(TARGET)
 
