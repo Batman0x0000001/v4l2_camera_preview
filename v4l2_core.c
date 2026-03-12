@@ -45,6 +45,9 @@ void app_state_init(AppState *app,const char *device_path){
     app->latest.frame_id = 0;
     app->latest.mutex = NULL;
 
+    app->stream_on = 1;
+    app->record_on = 1;
+
 }
 
 int open_device(AppState *app){
@@ -703,28 +706,30 @@ static int capture_thread(void *userdate){
             }
 
             if(!app->paused){
-                SDL_LockMutex(app->latest.mutex);
-
+                //先把设备帧转移到采集线程私有缓冲
                 yuyv_to_rgb24(
                     (const unsigned char *)app->buffers[buf.index].start,
-                    app->latest.rgb,
+                    app->capture_rgb,
                     app->width,
                     app->height);
-                app->latest.frame_id++;
 
-                if(app->stream.enabled){
-                    if(stream_push_rgb_frame(app,app->latest.rgb) < 0){
+                //快速更新latest,只在拷贝的时候持锁
+                SDL_LockMutex(app->latest.mutex);
+                memcpy(app->latest.rgb,app->capture_rgb,app->capture_rgb_bytes);
+                app->latest.frame_id++;
+                SDL_UnlockMutex(app->latest.mutex);
+
+                if(app->stream.enabled && app->stream_on){
+                    if(stream_push_rgb_frame(app,app->capture_rgb) < 0){
                         fprintf(stderr, "stream_push_rgb_frame failed\n");
                     }
                 }
 
-                if(app->record.enabled){
-                    if(record_push_rgb_frame(app,app->latest.rgb) < 0){
+                if(app->record.enabled && app->record_on){
+                    if(record_push_rgb_frame(app,app->capture_rgb) < 0){
                         fprintf(stderr, "record_push_rgb_frame failed\n");
                     }
                 }
-
-                SDL_UnlockMutex(app->latest.mutex);
             }
 
             if(xioctl(app->fd,VIDIOC_QBUF,&buf) < 0){
@@ -980,6 +985,18 @@ int set_control_by_index(AppState *app,int index,int value){
     return set_control_value(app,app->controls[index].id,value);
 }
 
+int init_capture_rgb(AppState *app){
+    app->capture_rgb_bytes = (size_t)app->width * app->height * 3;
+    app->capture_rgb = (unsigned char *)malloc(app->capture_rgb_bytes);
+    if(!app->capture_rgb){
+        perror("capture_rgb malloc ");
+        return -1;
+    }
+
+    memset(app->capture_rgb,0,app->capture_rgb_bytes);
+    return 0;
+}
+
 void cleanup(AppState *app){
     app->quit = 1;
 
@@ -1003,6 +1020,10 @@ void cleanup(AppState *app){
     app->latest.rgb = NULL;
     app->latest.bytes = 0;
     app->latest.frame_id = 0;
+
+    free(app->capture_rgb);
+    app->capture_rgb = NULL;
+    app->capture_rgb_bytes = 0;
 
     if(app->fd > 0){
         close(app->fd);

@@ -106,6 +106,12 @@ int main(int argc, char const *argv[])
         return 1;
     }
 
+    if(init_capture_rgb(&app) < 0){
+        cleanup(&app);
+        SDL_Quit();
+        return 1;
+    }
+
     if(display_init(&app) < 0){
         cleanup(&app);
         SDL_Quit();
@@ -138,7 +144,7 @@ int main(int argc, char const *argv[])
     scan_controls(&app);
     print_controls(&app);
 
-    printf("运行中:Space 暂停/继续,[/] 调整亮度,ESC 退出\n");
+    printf("运行中:Space 暂停/继续,[/] 调整亮度,T推流,R录像,ESC 退出\n");
     printf("推流地址:%s\n",app.stream.output_url);
     printf("本地录像:%s\n",app.record.output_path);
 
@@ -154,6 +160,14 @@ int main(int argc, char const *argv[])
                     if(display_save_latest_ppm(&app,"screenshot.ppm") < 0){
                         fprintf(stderr,"截屏失败\n");
                     }
+                    break;
+                case SDLK_t:
+                    app.stream_on = !app.stream_on;
+                    printf("RTSP推流%s\n",app.stream_on?"开启":"暂停");
+                    break;
+                case SDLK_r:
+                    app.record_on = !app.record_on;
+                    printf("录像%s\n",app.record_on?"开启":"暂停");
                     break;
                 case SDLK_LEFTBRACKET:
                     {

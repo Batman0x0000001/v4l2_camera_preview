@@ -99,14 +99,18 @@ int display_present_latest(AppState *app){
     }
 
     if(SDL_LockTexture(app->texture,NULL,&pixels,&pitch) != 0){
+        //                                   ↑        ↑
+        //                  texture内部内存的地址    每行字节数
+        //                  写入pixels就是写入texture
         SDL_UnlockMutex(app->latest.mutex);
         return -1;
     }
 
     for(y = 0;y < app->latest.height;y++){
-        memcpy((unsigned char *)pixels+y*pitch,
-            app->latest.rgb + y*app->latest.width*3,
-            (size_t)app->latest.width*3);
+        memcpy(
+            (unsigned char *)pixels+y*pitch, // 目标：texture第y行
+            app->latest.rgb + y*app->latest.width*3, // 源：rgb第y行
+            (size_t)app->latest.width*3);// 只复制有效数据
     }
 
     SDL_UnlockTexture(app->texture);

@@ -108,6 +108,13 @@ typedef struct AppState{
     StreamState stream;
     RecordState record;
 
+    //采集线程私有RGB临时缓冲
+    unsigned char *capture_rgb;
+    size_t capture_rgb_bytes;
+
+    int stream_on;
+    int record_on;
+
     int quit;
     int paused;
 }AppState;
