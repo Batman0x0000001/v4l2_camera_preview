@@ -8,6 +8,7 @@
 #include"app.h"
 #include"v4l2_core.h"
 #include"stream.h"
+#include"record.h"
 
 /*
     在 V4L2 中几乎所有操作都通过它完成
@@ -717,6 +718,12 @@ static int capture_thread(void *userdate){
                     }
                 }
 
+                if(app->record.enabled){
+                    if(record_push_rgb_frame(app,app->latest.rgb) < 0){
+                        fprintf(stderr, "record_push_rgb_frame failed\n");
+                    }
+                }
+
                 SDL_UnlockMutex(app->latest.mutex);
             }
 
@@ -982,6 +989,7 @@ void cleanup(AppState *app){
     }
 
     stream_close(app);
+    record_close(app);
 
     stop_capturing(app);
     uninit_mmap(app);

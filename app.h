@@ -58,6 +58,31 @@ typedef struct StreamState{
     int enabled;
 }StreamState;
 
+typedef struct RecordState{
+    char output_path[512];
+
+    const AVCodec *encoder;
+    AVCodecContext *enc_ctx;
+
+    AVFormatContext *ofmt_ctx;
+    AVStream *video_st;
+
+    /*
+        不透明结构体  不知道这个结构体有多大，无法分配内存
+        而指针大小固定是8字节，可以声明
+    */
+    struct SwsContext *sws_ctx;
+
+    AVFrame *yuv_frame;
+    AVPacket *pkt;
+
+    int fps;
+    int64_t frame_index;
+
+    SDL_mutex *mutex;
+    int enabled;
+}RecordState;
+
 typedef struct AppState{
     char device_path[256];
     int fd;
@@ -81,6 +106,7 @@ typedef struct AppState{
     int current_control;
 
     StreamState stream;
+    RecordState record;
 
     int quit;
     int paused;

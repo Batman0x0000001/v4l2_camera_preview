@@ -5,7 +5,8 @@ TARGET := v4l2_camera_preview
 SRCS := main.c \
         v4l2_core.c \
 		display.c \
-		stream.c
+		stream.c \
+		record.c
 
 OBJS := $(SRCS:.c=.o)
 
@@ -22,7 +23,7 @@ $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) $(PKG_CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(OBJS) $(TARGET) record.mp4
 
 run: $(TARGET)
 	./$(TARGET)

@@ -185,8 +185,6 @@ static int stream_write_one_packet(AppState *app){
         if(ret < 0){
             return -1;
         }
-
-        return 0;
     }
 }
 

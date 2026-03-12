@@ -3,6 +3,7 @@
 #include"v4l2_core.h"
 #include"display.h"
 #include"stream.h"
+#include"record.h"
 
 static void print_control_status(const char *name, int value) {
     static char last_name[32] = "";
@@ -34,6 +35,7 @@ int main(int argc, char const *argv[])
 
     app_state_init(&app,device);
     stream_state_init(&app,"rtsp://127.0.0.1:8554/cam",25);
+    record_state_init(&app,"record.mp4",25);
 
     if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0){
         fprintf(stderr, "SDL_Init failed:%s\n",SDL_GetError());
@@ -118,6 +120,14 @@ int main(int argc, char const *argv[])
         return 1;
     }
 
+    if (record_init(&app) < 0) {
+        fprintf(stderr, "MP4 录像初始化失败\n");
+        display_destroy(&app);
+        cleanup(&app);
+        SDL_Quit();
+        return 1;
+    }
+
     if(capture_start_thread(&app) < 0){
         display_destroy(&app);
         cleanup(&app);
@@ -129,7 +139,8 @@ int main(int argc, char const *argv[])
     print_controls(&app);
 
     printf("运行中:Space 暂停/继续,[/] 调整亮度,ESC 退出\n");
-    printf("推流地址：%s\n",app.stream.output_url);
+    printf("推流地址:%s\n",app.stream.output_url);
+    printf("本地录像:%s\n",app.record.output_path);
 
     while(!app.quit){
         while(SDL_PollEvent(&event)){
