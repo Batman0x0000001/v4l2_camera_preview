@@ -16,12 +16,19 @@ typedef struct Buffer{
     size_t length;
 }Buffer;
 
+typedef struct CaptureMeta{
+    uint32_t sequence;
+    uint32_t bytesused;
+    uint64_t timestamp_us;
+}CaptureMeta;
+
 typedef struct SharedFrame{
     unsigned char *rgb;
     int width;
     int height;
     size_t bytes;
     uint64_t frame_id;
+    CaptureMeta meta;//采集元信息
     SDL_mutex *mutex;
 }SharedFrame;
 
@@ -114,6 +121,11 @@ typedef struct AppState{
 
     int stream_on;
     int record_on;
+
+    uint32_t bytesperline;
+    uint32_t sizeimage;
+    uint64_t frames_captured;
+    uint64_t frames_dropped;
 
     int quit;
     int paused;

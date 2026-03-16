@@ -235,6 +235,9 @@ int set_format(AppState *app){
     app->height = fmt.fmt.pix.height;
     app->pixfmt = fmt.fmt.pix.pixelformat;
 
+    app->bytesperline = fmt.fmt.pix.bytesperline;
+    app->sizeimage = fmt.fmt.pix.sizeimage;
+
     printf("协商后的格式：\n");
     printf("size:%d x %d\n",app->width,app->height);
     printf("pixfmt:");
@@ -316,9 +319,12 @@ int init_mmap(AppState *app){
             app->fd,
             buf.m.offset);
 
-        if(app->buffers[i].start == MAP_FAILED){
+        if (app->buffers[i].start == MAP_FAILED) {
             perror("mmap");
-            return -1;
+            app->buffers[i].start = NULL;
+            app->n_buffers = i;   // 记录已映射的数量
+            uninit_mmap(app);     // 统一清理已映射的部分
+            return -1;            // 正确清理再返回
         }
 
         //%zu输出size_t型
@@ -652,7 +658,12 @@ int init_shared_frame(AppState *app){
         return -1;
     }
 
-    memset(app->latest.rgb,0,sizeof(app->latest.bytes));
+    memset(app->latest.rgb,0,app->latest.bytes);
+
+    app->latest.frame_id = 0;
+    app->latest.meta.sequence = 0;
+    app->latest.meta.bytesused = 0;
+    app->latest.meta.timestamp_us = 0;
 
     app->latest.mutex = SDL_CreateMutex();
     if(!app->latest.mutex){
@@ -665,6 +676,9 @@ int init_shared_frame(AppState *app){
 
 static int capture_thread(void *userdate){
     AppState *app = (AppState *)userdate;
+
+    uint32_t last_sequence = 0;
+    int have_last_sequence = 0;
 
     while(!app->quit){
         fd_set fds;
@@ -706,6 +720,16 @@ static int capture_thread(void *userdate){
             }
 
             if(!app->paused){
+                app->frames_captured++;
+
+                if(have_last_sequence){
+                    if(buf.sequence > last_sequence + 1){
+                        app->frames_dropped += (uint64_t)(buf.sequence - last_sequence - 1);
+                    }
+                }
+                last_sequence = buf.sequence;
+                have_last_sequence = 1;
+
                 //先把设备帧转移到采集线程私有缓冲
                 yuyv_to_rgb24(
                     (const unsigned char *)app->buffers[buf.index].start,
@@ -717,6 +741,11 @@ static int capture_thread(void *userdate){
                 SDL_LockMutex(app->latest.mutex);
                 memcpy(app->latest.rgb,app->capture_rgb,app->capture_rgb_bytes);
                 app->latest.frame_id++;
+                
+                app->latest.meta.sequence = buf.sequence;
+                app->latest.meta.bytesused = buf.bytesused;
+                app->latest.meta.timestamp_us = timeval_to_us(&buf.timestamp);
+
                 SDL_UnlockMutex(app->latest.mutex);
 
                 if(app->stream.enabled && app->stream_on){
@@ -997,6 +1026,10 @@ int init_capture_rgb(AppState *app){
     return 0;
 }
 
+static uint64_t timeval_to_us(const struct timeval *tv){
+    return (uint64_t)tv->tv_sec * 1000000ULL + (uint64_t)tv->tv_usec;
+}
+
 void cleanup(AppState *app){
     app->quit = 1;
 
@@ -1025,7 +1058,7 @@ void cleanup(AppState *app){
     app->capture_rgb = NULL;
     app->capture_rgb_bytes = 0;
 
-    if(app->fd > 0){
+    if(app->fd >= 0){
         close(app->fd);
         app->fd = -1;
     }

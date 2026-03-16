@@ -139,7 +139,7 @@ static int stream_init_output(AppState *app){
     av_dict_set(&opts, "rtsp_transport", "tcp", 0);
     //RTSP 推流不应该用 avio_open2 直接连接，应该用 avformat_write_header 配合 AVDictionary 设置传输参数。
 
-    ret = avformat_write_header(app->stream.ofmt_ctx,NULL);
+    ret = avformat_write_header(app->stream.ofmt_ctx,&opts);
     if(ret < 0){
         fprintf(stderr, "avformat_write_header failed\n");
         return -1;

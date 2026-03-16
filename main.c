@@ -1,4 +1,5 @@
 #include<stdio.h>
+#include<string.h>
 #include"app.h"
 #include"v4l2_core.h"
 #include"display.h"
@@ -94,12 +95,6 @@ int main(int argc, char const *argv[])
         return 1;
     }
 
-    if (start_capturing(&app) < 0) {
-        cleanup(&app);
-        SDL_Quit();
-        return 1;
-    }
-
     if(init_shared_frame(&app) < 0){
         cleanup(&app);
         SDL_Quit();
@@ -129,6 +124,12 @@ int main(int argc, char const *argv[])
     if (record_init(&app) < 0) {
         fprintf(stderr, "MP4 录像初始化失败\n");
         display_destroy(&app);
+        cleanup(&app);
+        SDL_Quit();
+        return 1;
+    }
+
+    if (start_capturing(&app) < 0) {
         cleanup(&app);
         SDL_Quit();
         return 1;
@@ -253,7 +254,7 @@ int main(int argc, char const *argv[])
                     }
                 case SDLK_UP:
                     app.current_control++;
-                    if(app.current_control > app.control_count){
+                    if(app.current_control >= app.control_count){
                         app.current_control = 0;
                     }
                     break;
