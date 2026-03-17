@@ -7,8 +7,7 @@ SRCS := main.c \
 		display.c \
 		stream.c \
 		record.c \
-		frame_queue.c \
-		media_frame.c
+		frame_queue.c 
 
 OBJS := $(SRCS:.c=.o)
 
@@ -21,7 +20,7 @@ all: $(TARGET)
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $(OBJS) $(PKG_LIBS)
 
-%.o: %.c app.h v4l2_core.h
+%.o: %.c
 	$(CC) $(CFLAGS) $(PKG_CFLAGS) -c $< -o $@
 
 clean:

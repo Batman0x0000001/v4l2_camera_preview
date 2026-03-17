@@ -1,6 +1,7 @@
 #include<stdio.h>
 #include<string.h>
 #include"stream.h"
+#include"log.h"
 
 static int64_t timestamp_us_to_pts(uint64_t delta_us,AVRational time_base){
     return av_rescale_q((int64_t)delta_us,(AVRational){1,1000000},time_base);
@@ -14,6 +15,7 @@ void stream_state_init(AppState *app,const char *url,int fps){
     app->stream.base_timestamp_us = 0;
     app->stream.have_base_timestamp = 0;
     app->stream.last_input_pts = AV_NOPTS_VALUE;
+    app->stream.frames_encoded = 0;
 }
 
 static int stream_init_encoder(AppState *app){
@@ -157,7 +159,7 @@ static int stream_init_output(AppState *app){
 static int stream_init_queue(AppState *app){
     size_t frame_bytes = app->sizeimage;
 
-    if(frame_queue_init(&app->stream.queue,8,frame_bytes,app->width,app->height,app->pixfmt) < 0){
+    if(frame_queue_init(&app->stream.queue,8,frame_bytes,app->width,app->height,(int)app->bytesperline,app->pixfmt) < 0){
         fprintf(stderr, "frame_queue_init (stream) failed\n");
         return -1;
     }
@@ -253,7 +255,11 @@ static int stream_consume_packet(AppState *app,const FramePacket *pkt){
     }
 
     src_slices[0] = pkt->data;
-    src_stride[0] = pkt->width * 2;
+    if(pkt->stride <= 0){
+        fprintf(stderr, "invalid stream packet stride:%d\n", pkt->stride);
+        return -1;
+    }
+    src_stride[0] = pkt->stride;
 
     sws_scale(
         app->stream.sws_ctx,
@@ -273,12 +279,13 @@ static int stream_consume_packet(AppState *app,const FramePacket *pkt){
     }
 
     ret = stream_write_one_packet(app);
-    SDL_UnlockMutex(app->stream.mutex);
-
     if(ret < 0){
+        SDL_UnlockMutex(app->stream.mutex);
         return -1;
     }
 
+    app->stream.frames_encoded++;
+    SDL_UnlockMutex(app->stream.mutex);
     return 0;
 }
 
@@ -288,7 +295,7 @@ static int stream_thread_main(void *userdata){
     FrameQueuePopResult pop_ret;
     size_t frame_bytes = app->sizeimage;
 
-    if(frame_packet_init(&pkt,frame_bytes,app->width,app->height,app->pixfmt) < 0){
+    if(frame_packet_init(&pkt,frame_bytes,app->width,app->height,(int)app->bytesperline,app->pixfmt) < 0){
         fprintf(stderr, "frame_packet_init (stream) failed\n");
         return -1;
     }

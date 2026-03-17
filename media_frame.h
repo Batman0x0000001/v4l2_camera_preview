@@ -17,6 +17,7 @@ typedef struct FramePacket{
     size_t bytes;
     int width;
     int height;
+    int stride;
     uint64_t frame_id;
     CaptureMeta meta;
 }FramePacket;

@@ -24,13 +24,13 @@ typedef struct FrameQueue{
     SDL_cond *not_empty;
 }FrameQueue;
 
-int frame_packet_init(FramePacket *pkt,size_t capacity,int width,int height,uint32_t pixfmt);
+int frame_packet_init(FramePacket *pkt,size_t capacity,int width,int height,int stride,uint32_t pixfmt);
 void frame_packet_free(FramePacket *pkt);
 
-int frame_queue_init(FrameQueue *q,int capacity,size_t frame_bytes,int width,int height,uint32_t pixfmt);
+int frame_queue_init(FrameQueue *q,int capacity,size_t frame_bytes,int width,int height,int stride,uint32_t pixfmt);
 void frame_queue_stop(FrameQueue *q);
 void frame_queue_destroy(FrameQueue *q);
-int frame_queue_push(FrameQueue *q,const uint8_t *rgb,size_t bytes,int width,int height,uint32_t pixfmt, uint64_t frame_id,const CaptureMeta *meta);
+int frame_queue_push(FrameQueue *q,const uint8_t *rgb,size_t bytes,int width,int height,int stride,uint32_t pixfmt, uint64_t frame_id,const CaptureMeta *meta);
 FrameQueuePopResult frame_queue_pop(FrameQueue *q,FramePacket *out,int timeout_ms);
 
 #endif

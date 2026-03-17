@@ -3,7 +3,7 @@
 #include<string.h>
 #include"frame_queue.h"
 
-int frame_packet_init(FramePacket *pkt,size_t capacity,int width,int height,uint32_t pixfmt){
+int frame_packet_init(FramePacket *pkt,size_t capacity,int width,int height,int stride,uint32_t pixfmt){
     if(!pkt || capacity == 0){
         return -1;
     }
@@ -18,6 +18,7 @@ int frame_packet_init(FramePacket *pkt,size_t capacity,int width,int height,uint
     pkt->capacity = capacity;
     pkt->width = width;
     pkt->height = height;
+    pkt->stride = stride;
     pkt->pixfmt = pixfmt;
 
     return 0;
@@ -34,6 +35,7 @@ void frame_packet_free(FramePacket *pkt){
     pkt->bytes = 0;
     pkt->width = 0;
     pkt->height = 0;
+    pkt->stride = 0;
     pkt->pixfmt = 0;
     pkt->frame_id = 0;
     pkt->meta.sequence = 0;
@@ -41,7 +43,7 @@ void frame_packet_free(FramePacket *pkt){
     pkt->meta.timestamp_us = 0;
 }
 
-int frame_queue_init(FrameQueue *q,int capacity,size_t frame_bytes,int width,int height,uint32_t pixfmt){
+int frame_queue_init(FrameQueue *q,int capacity,size_t frame_bytes,int width,int height,int stride,uint32_t pixfmt){
     if(!q || capacity <= 0 || frame_bytes == 0){
         return -1;
     }
@@ -62,7 +64,7 @@ int frame_queue_init(FrameQueue *q,int capacity,size_t frame_bytes,int width,int
 
     for (int i = 0; i < capacity; i++)
     {
-        if(frame_packet_init(&q->slots[i],frame_bytes,width,height,pixfmt) < 0){
+        if(frame_packet_init(&q->slots[i],frame_bytes,width,height,stride,pixfmt) < 0){
             for (int j = 0; j < i; j++)
             {
                 frame_packet_free(&q->slots[j]);
@@ -131,7 +133,7 @@ void frame_queue_destroy(FrameQueue *q){
     q->stop_request = 0;
 }
 
-int frame_queue_push(FrameQueue *q,const uint8_t *data,size_t bytes,int width,int height,uint32_t pixfmt,uint64_t frame_id,const CaptureMeta *meta){
+int frame_queue_push(FrameQueue *q,const uint8_t *data,size_t bytes,int width,int height,int stride,uint32_t pixfmt,uint64_t frame_id,const CaptureMeta *meta){
     FramePacket *slot;
 
     if(!q || !data || !meta || !q->mutex){
@@ -162,6 +164,7 @@ int frame_queue_push(FrameQueue *q,const uint8_t *data,size_t bytes,int width,in
     slot->bytes = bytes;
     slot->width = width;
     slot->height = height;
+    slot->stride = stride;
     slot->pixfmt = pixfmt;
     slot->frame_id = frame_id;
     slot->meta = *meta;
@@ -221,6 +224,7 @@ FrameQueuePopResult frame_queue_pop(FrameQueue *q,FramePacket *out,int timeout_m
     out->meta = slot->meta;
     out->width = slot->width;
     out->height = slot->height;
+    out->stride = slot->stride;
     out->pixfmt = slot->pixfmt;
 
     q->read_index = (q->read_index + 1) % q->capacity;

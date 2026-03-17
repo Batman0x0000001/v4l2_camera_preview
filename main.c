@@ -5,6 +5,7 @@
 #include"display.h"
 #include"stream.h"
 #include"record.h"
+#include"log.h"
 
 static void print_control_status(const char *name, int value) {
     static char last_name[32] = "";
@@ -42,6 +43,8 @@ int main(int argc, char const *argv[])
         fprintf(stderr, "SDL_Init failed:%s\n",SDL_GetError());
         return -1;
     }
+
+    app.last_stats_ms = SDL_GetTicks64();
 
     if(open_device(&app) < 0){
         cleanup(&app);
@@ -287,7 +290,21 @@ int main(int argc, char const *argv[])
             fprintf(stderr,"显示失败\n");
             break;
         }
-
+        {
+            uint64_t now_ms = SDL_GetTicks64();
+            if(now_ms - app.last_stats_ms >= 1000){
+                LOG_INFO("capture=%llu dropped=%llu stream_q_drop=%llu record_q_drop=%llu\n stream_encoded=%llu record_encoded=%llu latest_seq=%u latest_bytes=%u\n",
+                        (unsigned long long)app.frames_captured,
+                        (unsigned long long)app.frames_dropped,
+                        (unsigned long long)app.stream.queue.dropped_frames,
+                        (unsigned long long)app.record.queue.dropped_frames,
+                        (unsigned long long)app.stream.frames_encoded,
+                        (unsigned long long)app.record.frames_encoded,
+                        app.latest.meta.sequence,
+                        app.latest.meta.bytesused);
+                app.last_stats_ms = now_ms;
+    }
+        }
         CameraControl *c = &app.controls[app.current_control];
         int value;
         /*

@@ -65,6 +65,8 @@ typedef struct StreamState{
 
     SDL_Thread *thread;
     FrameQueue queue;
+
+    uint64_t frames_encoded;
 }StreamState;
 
 typedef struct RecordState{
@@ -96,6 +98,8 @@ typedef struct RecordState{
 
     SDL_Thread *thread;
     FrameQueue queue;
+
+    uint64_t frames_encoded;
 }RecordState;
 
 typedef struct AppState{
@@ -137,6 +141,7 @@ typedef struct AppState{
     uint32_t sizeimage;
     uint64_t frames_captured;
     uint64_t frames_dropped;
+    uint64_t last_stats_ms;
 
     int quit;
     int paused;

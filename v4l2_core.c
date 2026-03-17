@@ -9,6 +9,7 @@
 #include"v4l2_core.h"
 #include"stream.h"
 #include"record.h"
+#include"log.h"
 
 /*
     在 V4L2 中几乎所有操作都通过它完成
@@ -238,13 +239,12 @@ int set_format(AppState *app){
     app->bytesperline = fmt.fmt.pix.bytesperline;
     app->sizeimage = fmt.fmt.pix.sizeimage;
 
-    printf("协商后的格式：\n");
-    printf("size:%d x %d\n",app->width,app->height);
-    printf("pixfmt:");
-    print_fourcc(app->pixfmt);
-    printf("\n");
-    printf("bytesline:%u\n",fmt.fmt.pix.bytesperline);
-    printf("sizeimage:%u\n",fmt.fmt.pix.sizeimage);
+    LOG_INFO("format negotiated: width=%d height=%d pixfmt=0x%x bytesperline=%u sizeimage=%u",
+         app->width,
+         app->height,
+         app->pixfmt,
+         app->bytesperline,
+         app->sizeimage);
 
     return 0;
 }
@@ -681,8 +681,8 @@ static uint64_t timeval_to_us(const struct timeval *tv){
 static int capture_thread(void *userdate){
     AppState *app = (AppState *)userdate;
 
-    // uint32_t last_sequence = 0;
-    // int have_last_sequence = 0;
+    uint32_t last_sequence = 0;
+    int have_last_sequence = 0;
 
     while(!app->quit){
         fd_set fds;
@@ -728,15 +728,34 @@ static int capture_thread(void *userdate){
                 uint64_t frame_id;
                 const unsigned char *src_yuyv = (const unsigned char *)app->buffers[buf.index].start;
                 size_t copy_bytes = (size_t)buf.bytesused;
+                size_t expected_min_bytes = (size_t)app->bytesperline * (size_t)app->height;
 
+                if(app->bytesperline == 0){
+                    fprintf(stderr, "invalid bytesperline\n");
+                    goto requeue_buffer;
+                }
+                if(copy_bytes == 0){
+                    fprintf(stderr, "warning:captured empty frame\n");
+                    goto requeue_buffer;
+                }
                 if(copy_bytes > app->capture_yuyv_bytes){
                     fprintf(stderr, "captured bytes exceed capture_yuyv buffer\n");
                     // 直接跳过这帧，不处理损坏的数据
-                    if (xioctl(app->fd, VIDIOC_QBUF, &buf) < 0) {
-                        perror("VIDIOC_QBUF");
-                    }
-                    continue;
+                    goto requeue_buffer;
                 }
+                if(copy_bytes < expected_min_bytes){
+                    fprintf(stderr, "warning:bytesused smaller than bytesperline * height :%zu < %zu\n",copy_bytes,expected_min_bytes );
+                }
+
+                app->frames_captured++;
+                if(have_last_sequence){
+                    if(buf.sequence > last_sequence +1){
+                        app->frames_dropped += (uint64_t)(buf.sequence - last_sequence - 1);
+                    }
+                }
+                last_sequence = buf.sequence;
+                have_last_sequence = 1;
+
                 memcpy(app->capture_yuyv,src_yuyv,copy_bytes);
 
                 //先把设备帧转移到采集线程私有缓冲
@@ -765,6 +784,7 @@ static int capture_thread(void *userdate){
                         copy_bytes,
                         app->width,
                         app->height,
+                        (int)app->bytesperline,
                         app->pixfmt,
                         frame_id,
                         &meta) < 0){
@@ -779,6 +799,7 @@ static int capture_thread(void *userdate){
                         copy_bytes,
                         app->width,
                         app->height,
+                        (int)app->bytesperline,
                         app->pixfmt,
                         frame_id,
                         &meta) < 0){
@@ -786,7 +807,7 @@ static int capture_thread(void *userdate){
                     }
                 }
             }
-
+        requeue_buffer:
             if(xioctl(app->fd,VIDIOC_QBUF,&buf) < 0){
                 perror("VIDIOC_QBUF");
                 break;
