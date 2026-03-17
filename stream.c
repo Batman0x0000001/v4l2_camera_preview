@@ -148,19 +148,14 @@ static int stream_init_output(AppState *app){
     return 0;
 }
 
-int stream_init(AppState *app){
-    if(stream_init_encoder(app) < 0){
-        return -1;
-    }
-    if(stream_init_buffers(app) < 0){
-        return -1;
-    }
-    if(stream_init_output(app) < 0){
+static int stream_init_queue(AppState *app){
+    size_t frame_bytes = (size_t)app->width * app->height * 3;
+
+    if(frame_queue_init(&app->stream.queue,8,frame_bytes,app->width,app->height) < 0){
+        fprintf(stderr, "frame_queue_init (stream) failed\n");
         return -1;
     }
 
-    app->stream.enabled = 1;
-    
     return 0;
 }
 
@@ -203,12 +198,12 @@ static void stream_flush_encoder(AppState *app){
     (void)stream_write_one_packet(app);
 }
 
-int stream_push_rgb_frame(AppState *app,const unsigned char *rgb){
+static int stream_consume_packet(AppState *app,const FramePacket *pkt){
     const uint8_t *src_slices[1];
     int src_stride[1];
     int ret;
 
-    if(!app->stream.enabled || !rgb){
+    if(!app->stream.enabled || !pkt || !pkt->rgb){
         return 0;
     }
 
@@ -220,8 +215,8 @@ int stream_push_rgb_frame(AppState *app,const unsigned char *rgb){
         return -1;
     }
 
-    src_slices[0] = rgb;
-    src_stride[0] = app->width*3;
+    src_slices[0] = pkt->rgb;
+    src_stride[0] = pkt->width * 3;
 
     sws_scale(
         app->stream.sws_ctx,
@@ -230,7 +225,7 @@ int stream_push_rgb_frame(AppState *app,const unsigned char *rgb){
         app->height,
         app->stream.yuv_frame->data,
         app->stream.yuv_frame->linesize);
-    
+
     app->stream.yuv_frame->pts = app->stream.frame_index++;
 
     ret = avcodec_send_frame(app->stream.enc_ctx,app->stream.yuv_frame);
@@ -249,8 +244,72 @@ int stream_push_rgb_frame(AppState *app,const unsigned char *rgb){
     return 0;
 }
 
+static int stream_thread_main(void *userdata){
+    AppState *app = (AppState *)userdata;
+    FramePacket pkt;
+    FrameQueuePopResult pop_ret;
+    size_t frame_bytes = (size_t)app->width * app->height * 3;
+
+    if(frame_packet_init(&pkt,frame_bytes,app->width,app->height) < 0){
+        fprintf(stderr, "frame_packet_init (stream) failed\n");
+        return -1;
+    }
+
+    while (1)
+    {
+        pop_ret = frame_queue_pop(&app->stream.queue,&pkt,200);
+        if(pop_ret == FRAME_QUEUE_POP_TIMEOUT){
+            continue;
+        }
+        if(pop_ret == FRAME_QUEUE_POP_STOPPED){
+            break;
+        }
+        if(pop_ret == FRAME_QUEUE_POP_ERROR){
+            fprintf(stderr, "frame_queue_pop (stream) failed\n");
+            break;
+        }
+
+        if(stream_consume_packet(app,&pkt) < 0){
+            fprintf(stderr, "stream_consume_packet failed\n");
+        }
+    }
+
+    frame_packet_free(&pkt);
+    return 0;
+}
+
+int stream_init(AppState *app){
+    if(stream_init_encoder(app) < 0){
+        return -1;
+    }
+    if(stream_init_buffers(app) < 0){
+        return -1;
+    }
+    if(stream_init_queue(app) < 0){
+        return -1;
+    }
+    if(stream_init_output(app) < 0){
+        return -1;
+    }
+
+    app->stream.enabled = 1;
+
+    app->stream.thread = SDL_CreateThread(stream_thread_main,"stream_thread",app);
+    if(!app->stream.thread){
+        fprintf(stderr, "SDL_CreateThread (stream) failed:%s\n",SDL_GetError());
+        return -1;
+    }
+    
+    return 0;
+}
+
 void stream_close(AppState *app)
 {
+    if(app->stream.thread){
+        frame_queue_stop(&app->stream.queue);
+        SDL_WaitThread(app->stream.thread,NULL);
+        app->stream.thread = NULL;
+    }
     if (app->stream.enabled) {
         SDL_LockMutex(app->stream.mutex);
         stream_flush_encoder(app);
@@ -285,6 +344,8 @@ void stream_close(AppState *app)
         sws_freeContext(app->stream.sws_ctx);
         app->stream.sws_ctx = NULL;
     }
+
+    frame_queue_destroy(&app->stream.queue);
 
     if (app->stream.mutex) {
         SDL_DestroyMutex(app->stream.mutex);

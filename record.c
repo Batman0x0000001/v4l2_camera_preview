@@ -175,19 +175,14 @@ static int record_init_output(AppState *app){
     return 0;
 }
 
-int record_init(AppState *app){
-    if(record_init_encoder(app) < 0){
-        return -1;
-    }
-    if(record_init_buffers(app) < 0){
-        return -1;
-    }
-    if(record_init_output(app) < 0){
+static int record_init_queue(AppState *app){
+    size_t frame_bytes = (size_t)app->width * app->height * 3;
+
+    if(frame_queue_init(&app->record.queue, 8, frame_bytes, app->width, app->height) < 0){
+        fprintf(stderr, "frame_queue_init (record) failed\n");
         return -1;
     }
 
-    app->record.enabled = 1;
-    
     return 0;
 }
 
@@ -233,12 +228,12 @@ static void record_flush_encoder(AppState *app){
     (void)record_write_one_packet(app);
 }
 
-int record_push_rgb_frame(AppState *app,const unsigned char *rgb){
+static int record_consume_packet(AppState *app, const FramePacket *pkt){
     const uint8_t *src_slices[1];
     int src_stride[1];
     int ret;
 
-    if(!app->record.enabled || !rgb){
+    if(!app->record.enabled || !pkt || !pkt->rgb){
         return 0;
     }
 
@@ -250,20 +245,20 @@ int record_push_rgb_frame(AppState *app,const unsigned char *rgb){
         return -1;
     }
 
-    src_slices[0] = rgb;
-    src_stride[0] = app->width*3;
+    src_slices[0] = pkt->rgb;
+    src_stride[0] = pkt->width * 3;
 
     sws_scale(
         app->record.sws_ctx,
-        src_slices,src_stride,
+        src_slices, src_stride,
         0,
-        app->height,
+        pkt->height,
         app->record.yuv_frame->data,
         app->record.yuv_frame->linesize);
-    
+
     app->record.yuv_frame->pts = app->record.frame_index++;
 
-    ret = avcodec_send_frame(app->record.enc_ctx,app->record.yuv_frame);
+    ret = avcodec_send_frame(app->record.enc_ctx, app->record.yuv_frame);
     if(ret < 0){
         SDL_UnlockMutex(app->record.mutex);
         return -1;
@@ -279,8 +274,70 @@ int record_push_rgb_frame(AppState *app,const unsigned char *rgb){
     return 0;
 }
 
+static int record_thread_main(void *userdata){
+    AppState *app = (AppState *)userdata;
+    FramePacket pkt;
+    FrameQueuePopResult pop_ret;
+    size_t frame_bytes = (size_t)app->width * app->height * 3;
+
+    if(frame_packet_init(&pkt, frame_bytes, app->width, app->height) < 0){
+        fprintf(stderr, "frame_packet_init (record worker) failed\n");
+        return -1;
+    }
+
+    while(1){
+        pop_ret = frame_queue_pop(&app->record.queue, &pkt, 200);
+        if(pop_ret == FRAME_QUEUE_POP_TIMEOUT){
+            continue;
+        }
+        if(pop_ret == FRAME_QUEUE_POP_STOPPED){
+            break;
+        }
+        if(pop_ret == FRAME_QUEUE_POP_ERROR){
+            fprintf(stderr, "frame_queue_pop (record) failed\n");
+            break;
+        }
+
+        if(record_consume_packet(app, &pkt) < 0){
+            fprintf(stderr, "record_consume_packet failed\n");
+        }
+    }
+
+    frame_packet_free(&pkt);
+    return 0;
+}
+
+int record_init(AppState *app){
+    if(record_init_encoder(app) < 0){
+        return -1;
+    }
+    if(record_init_buffers(app) < 0){
+        return -1;
+    }
+    if(record_init_queue(app) < 0){
+        return -1;
+    }
+    if(record_init_output(app) < 0){
+        return -1;
+    }
+
+    app->record.enabled = 1;
+    app->record.thread = SDL_CreateThread(record_thread_main,"record_thread",app);
+    if(!app->record.thread){
+        fprintf(stderr, "SDL_CreateThread (record) failed:%s\n", SDL_GetError());
+        return -1;
+    }
+    return 0;
+}
+
 void record_close(AppState *app)
 {
+    if(app->record.thread){
+        frame_queue_stop(&app->record.queue);
+        SDL_WaitThread(app->record.thread, NULL);
+        app->record.thread = NULL;
+    }
+
     if (app->record.enabled) {
         SDL_LockMutex(app->record.mutex);
         record_flush_encoder(app);
@@ -315,6 +372,8 @@ void record_close(AppState *app)
         sws_freeContext(app->record.sws_ctx);
         app->record.sws_ctx = NULL;
     }
+
+    frame_queue_destroy(&app->record.queue);
 
     if (app->record.mutex) {
         SDL_DestroyMutex(app->record.mutex);

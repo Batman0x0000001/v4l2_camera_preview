@@ -674,11 +674,15 @@ int init_shared_frame(AppState *app){
     return 0;
 }
 
+static uint64_t timeval_to_us(const struct timeval *tv){
+    return (uint64_t)tv->tv_sec * 1000000ULL + (uint64_t)tv->tv_usec;
+}
+
 static int capture_thread(void *userdate){
     AppState *app = (AppState *)userdate;
 
-    uint32_t last_sequence = 0;
-    int have_last_sequence = 0;
+    // uint32_t last_sequence = 0;
+    // int have_last_sequence = 0;
 
     while(!app->quit){
         fd_set fds;
@@ -720,16 +724,9 @@ static int capture_thread(void *userdate){
             }
 
             if(!app->paused){
-                app->frames_captured++;
-
-                if(have_last_sequence){
-                    if(buf.sequence > last_sequence + 1){
-                        app->frames_dropped += (uint64_t)(buf.sequence - last_sequence - 1);
-                    }
-                }
-                last_sequence = buf.sequence;
-                have_last_sequence = 1;
-
+                CaptureMeta meta;
+                uint64_t frame_id;
+                
                 //先把设备帧转移到采集线程私有缓冲
                 yuyv_to_rgb24(
                     (const unsigned char *)app->buffers[buf.index].start,
@@ -737,26 +734,37 @@ static int capture_thread(void *userdate){
                     app->width,
                     app->height);
 
+                meta.sequence = buf.sequence;
+                meta.bytesused = buf.bytesused;
+                meta.timestamp_us = timeval_to_us(&buf.timestamp);
+
                 //快速更新latest,只在拷贝的时候持锁
                 SDL_LockMutex(app->latest.mutex);
                 memcpy(app->latest.rgb,app->capture_rgb,app->capture_rgb_bytes);
                 app->latest.frame_id++;
-                
-                app->latest.meta.sequence = buf.sequence;
-                app->latest.meta.bytesused = buf.bytesused;
-                app->latest.meta.timestamp_us = timeval_to_us(&buf.timestamp);
-
+                app->latest.meta = meta;
+                frame_id = app->latest.frame_id;
                 SDL_UnlockMutex(app->latest.mutex);
 
                 if(app->stream.enabled && app->stream_on){
-                    if(stream_push_rgb_frame(app,app->capture_rgb) < 0){
-                        fprintf(stderr, "stream_push_rgb_frame failed\n");
+                    if(frame_queue_push(
+                        &app->stream.queue,
+                        app->capture_rgb,
+                        app->capture_rgb_bytes,
+                        frame_id,
+                        &meta) < 0){
+                        fprintf(stderr, "frame_queue_push (stream) failed\n");
                     }
                 }
 
                 if(app->record.enabled && app->record_on){
-                    if(record_push_rgb_frame(app,app->capture_rgb) < 0){
-                        fprintf(stderr, "record_push_rgb_frame failed\n");
+                    if(frame_queue_push(
+                        &app->record.queue,
+                        app->capture_rgb,
+                        app->capture_rgb_bytes,
+                        frame_id,
+                        &meta) < 0){
+                        fprintf(stderr, "frame_queue_push (record) failed\n");
                     }
                 }
             }
@@ -1026,9 +1034,7 @@ int init_capture_rgb(AppState *app){
     return 0;
 }
 
-static uint64_t timeval_to_us(const struct timeval *tv){
-    return (uint64_t)tv->tv_sec * 1000000ULL + (uint64_t)tv->tv_usec;
-}
+
 
 void cleanup(AppState *app){
     app->quit = 1;

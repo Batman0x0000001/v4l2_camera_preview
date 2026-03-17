@@ -10,17 +10,13 @@
 #include <libavutil/frame.h>
 #include <libavutil/opt.h>
 #include <libavutil/imgutils.h>
+#include"media_frame.h"
+#include"frame_queue.h"
 
 typedef struct Buffer{
     void *start;
     size_t length;
 }Buffer;
-
-typedef struct CaptureMeta{
-    uint32_t sequence;
-    uint32_t bytesused;
-    uint64_t timestamp_us;
-}CaptureMeta;
 
 typedef struct SharedFrame{
     unsigned char *rgb;
@@ -63,6 +59,9 @@ typedef struct StreamState{
 
     SDL_mutex *mutex;
     int enabled;
+
+    SDL_Thread *thread;
+    FrameQueue queue;
 }StreamState;
 
 typedef struct RecordState{
@@ -88,6 +87,9 @@ typedef struct RecordState{
 
     SDL_mutex *mutex;
     int enabled;
+
+    SDL_Thread *thread;
+    FrameQueue queue;
 }RecordState;
 
 typedef struct AppState{

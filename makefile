@@ -6,7 +6,9 @@ SRCS := main.c \
         v4l2_core.c \
 		display.c \
 		stream.c \
-		record.c
+		record.c \
+		frame_queue.c \
+		media_frame.c
 
 OBJS := $(SRCS:.c=.o)
 
