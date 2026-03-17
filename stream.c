@@ -2,12 +2,18 @@
 #include<string.h>
 #include"stream.h"
 
+static int64_t timestamp_us_to_pts(uint64_t delta_us,AVRational time_base){
+    return av_rescale_q((int64_t)delta_us,(AVRational){1,1000000},time_base);
+}
+
 void stream_state_init(AppState *app,const char *url,int fps){
+    memset(&app->stream,0,sizeof(app->stream));
     snprintf(app->stream.output_url,sizeof(app->stream.output_url),"%s",url);
-    app->stream.fps = fps > 0 ? fps : 25;
+    app->stream.fps = fps;
     app->stream.frame_index = 0;
-    app->stream.enabled = 0;
-    app->stream.mutex = NULL;
+    app->stream.base_timestamp_us = 0;
+    app->stream.have_base_timestamp = 0;
+    app->stream.last_input_pts = AV_NOPTS_VALUE;
 }
 
 static int stream_init_encoder(AppState *app){
@@ -202,12 +208,37 @@ static int stream_consume_packet(AppState *app,const FramePacket *pkt){
     const uint8_t *src_slices[1];
     int src_stride[1];
     int ret;
+    uint64_t delta_us;
+    int64_t pts;
 
     if(!app->stream.enabled || !pkt || !pkt->rgb){
         return 0;
     }
 
     SDL_LockMutex(app->stream.mutex);
+
+    /*
+        摄像头硬件时间戳（绝对微秒）
+                ↓ 减去第1帧时间戳
+        相对时间（微秒，从0开始）
+                ↓ timestamp_us_to_pts
+        编码器PTS（time_base单位）
+    */
+    if(!app->stream.have_base_timestamp){
+        app->stream.base_timestamp_us = pkt->meta.timestamp_us;
+        app->stream.have_base_timestamp = 1;
+    }
+    if(pkt->meta.timestamp_us < app->stream.base_timestamp_us){
+        delta_us = 0;
+    }else{
+        delta_us = pkt->meta.timestamp_us - app->stream.base_timestamp_us;
+    }
+    pts = timestamp_us_to_pts(delta_us,app->stream.enc_ctx->time_base);
+
+    if(app->stream.last_input_pts != AV_NOPTS_VALUE && pts < app->stream.last_input_pts){
+        pts = app->stream.last_input_pts;
+    }
+    app->stream.last_input_pts = pts;
 
     ret = av_frame_make_writable(app->stream.yuv_frame);
     if(ret < 0){
@@ -226,7 +257,8 @@ static int stream_consume_packet(AppState *app,const FramePacket *pkt){
         app->stream.yuv_frame->data,
         app->stream.yuv_frame->linesize);
 
-    app->stream.yuv_frame->pts = app->stream.frame_index++;
+    app->stream.yuv_frame->pts = pts;
+    app->stream.frame_index++;
 
     ret = avcodec_send_frame(app->stream.enc_ctx,app->stream.yuv_frame);
     if(ret < 0){
@@ -353,4 +385,8 @@ void stream_close(AppState *app)
     }
 
     app->stream.enabled = 0;
+    app->stream.base_timestamp_us = 0;
+    app->stream.have_base_timestamp = 0;
+    app->stream.frame_index = 0;
+    app->stream.last_input_pts = AV_NOPTS_VALUE;
 }

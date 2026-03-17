@@ -2,12 +2,18 @@
 #include<string.h>
 #include"record.h"
 
+static int64_t timestamp_us_to_pts(uint64_t delta_us,AVRational time_base){
+    return av_rescale_q((int64_t)delta_us,(AVRational){1,1000000},time_base);
+}
+
 void record_state_init(AppState *app,const char *url,int fps){
+    memset(&app->record,0,sizeof(app->record));
     snprintf(app->record.output_path,sizeof(app->record.output_path),"%s",url);
-    app->record.fps = fps > 0 ? fps : 25;
+    app->record.fps = fps;
     app->record.frame_index = 0;
-    app->record.enabled = 0;
-    app->record.mutex = NULL;
+    app->record.base_timestamp_us = 0;
+    app->record.have_base_timestamp = 0;
+    app->record.last_input_pts = AV_NOPTS_VALUE;
 }
 
 static int record_init_encoder(AppState *app){
@@ -232,12 +238,33 @@ static int record_consume_packet(AppState *app, const FramePacket *pkt){
     const uint8_t *src_slices[1];
     int src_stride[1];
     int ret;
+    uint64_t delta_us;
+    int64_t pts;
 
     if(!app->record.enabled || !pkt || !pkt->rgb){
         return 0;
     }
 
     SDL_LockMutex(app->record.mutex);
+
+    if(!app->record.have_base_timestamp){
+        app->record.base_timestamp_us = pkt->meta.timestamp_us;
+        app->record.have_base_timestamp = 1;
+    }
+
+    if(pkt->meta.timestamp_us < app->record.base_timestamp_us){
+        delta_us = 0;
+    }else{
+        delta_us = pkt->meta.timestamp_us - app->record.base_timestamp_us;
+    }
+
+    pts = timestamp_us_to_pts(delta_us, app->record.enc_ctx->time_base);
+
+    if(app->record.last_input_pts != AV_NOPTS_VALUE && pts < app->record.last_input_pts){
+        pts = app->record.last_input_pts;
+    }
+    app->record.last_input_pts = pts;
+
 
     ret = av_frame_make_writable(app->record.yuv_frame);
     if(ret < 0){
@@ -256,7 +283,8 @@ static int record_consume_packet(AppState *app, const FramePacket *pkt){
         app->record.yuv_frame->data,
         app->record.yuv_frame->linesize);
 
-    app->record.yuv_frame->pts = app->record.frame_index++;
+    app->record.yuv_frame->pts = pts;
+    app->record.frame_index++;
 
     ret = avcodec_send_frame(app->record.enc_ctx, app->record.yuv_frame);
     if(ret < 0){
@@ -381,4 +409,8 @@ void record_close(AppState *app)
     }
 
     app->record.enabled = 0;
+    app->record.base_timestamp_us = 0;
+    app->record.have_base_timestamp = 0;
+    app->record.frame_index = 0;
+    app->record.last_input_pts = AV_NOPTS_VALUE;
 }

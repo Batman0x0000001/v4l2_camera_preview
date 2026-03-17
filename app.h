@@ -56,6 +56,9 @@ typedef struct StreamState{
 
     int fps;
     int64_t frame_index;
+    uint64_t base_timestamp_us;
+    int have_base_timestamp;
+    int64_t last_input_pts;
 
     SDL_mutex *mutex;
     int enabled;
@@ -84,6 +87,9 @@ typedef struct RecordState{
 
     int fps;
     int64_t frame_index;
+    uint64_t base_timestamp_us;
+    int have_base_timestamp;
+    int64_t last_input_pts;
 
     SDL_mutex *mutex;
     int enabled;
