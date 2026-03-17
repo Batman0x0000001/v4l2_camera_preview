@@ -38,7 +38,8 @@ void print_controls(AppState *app);
 int get_control_by_index(AppState *app,int index,int *value);
 int set_control_by_index(AppState *app,int index,int value);
 
-int init_capture_rgb(AppState *app);
+int alloc_preview_rgb_buffer(AppState *app);
+int alloc_capture_yuyv_buffer(AppState *app);
 
 void cleanup(AppState *app);
 

@@ -131,7 +131,7 @@ typedef struct RecordState{
 
 
 
-10.init_capture_rgb(AppState *app)
+10.alloc_preview_rgb_buffer(AppState *app)
 	app->capture_rgb//采集线程私有RGB临时缓冲
 	
 	

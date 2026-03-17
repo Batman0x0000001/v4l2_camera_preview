@@ -59,7 +59,7 @@ static int stream_init_buffers(AppState *app){
     app->stream.sws_ctx = sws_getContext(
         app->width,
         app->height,
-        AV_PIX_FMT_RGB24,
+        AV_PIX_FMT_YUYV422,
         app->width,
         app->height,
         AV_PIX_FMT_YUV420P,
@@ -155,9 +155,9 @@ static int stream_init_output(AppState *app){
 }
 
 static int stream_init_queue(AppState *app){
-    size_t frame_bytes = (size_t)app->width * app->height * 3;
+    size_t frame_bytes = app->sizeimage;
 
-    if(frame_queue_init(&app->stream.queue,8,frame_bytes,app->width,app->height) < 0){
+    if(frame_queue_init(&app->stream.queue,8,frame_bytes,app->width,app->height,app->pixfmt) < 0){
         fprintf(stderr, "frame_queue_init (stream) failed\n");
         return -1;
     }
@@ -211,7 +211,7 @@ static int stream_consume_packet(AppState *app,const FramePacket *pkt){
     uint64_t delta_us;
     int64_t pts;
 
-    if(!app->stream.enabled || !pkt || !pkt->rgb){
+    if(!app->stream.enabled || !pkt || !pkt->data){
         return 0;
     }
 
@@ -246,8 +246,14 @@ static int stream_consume_packet(AppState *app,const FramePacket *pkt){
         return -1;
     }
 
-    src_slices[0] = pkt->rgb;
-    src_stride[0] = pkt->width * 3;
+    if(pkt->pixfmt != V4L2_PIX_FMT_YUYV){
+        SDL_UnlockMutex(app->stream.mutex);
+        fprintf(stderr, "unsupported stream packet pixfmt:0x%x\n", pkt->pixfmt);
+        return -1;
+    }
+
+    src_slices[0] = pkt->data;
+    src_stride[0] = pkt->width * 2;
 
     sws_scale(
         app->stream.sws_ctx,
@@ -280,9 +286,9 @@ static int stream_thread_main(void *userdata){
     AppState *app = (AppState *)userdata;
     FramePacket pkt;
     FrameQueuePopResult pop_ret;
-    size_t frame_bytes = (size_t)app->width * app->height * 3;
+    size_t frame_bytes = app->sizeimage;
 
-    if(frame_packet_init(&pkt,frame_bytes,app->width,app->height) < 0){
+    if(frame_packet_init(&pkt,frame_bytes,app->width,app->height,app->pixfmt) < 0){
         fprintf(stderr, "frame_packet_init (stream) failed\n");
         return -1;
     }

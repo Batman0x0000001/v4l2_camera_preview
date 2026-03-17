@@ -124,8 +124,11 @@ typedef struct AppState{
     RecordState record;
 
     //采集线程私有RGB临时缓冲
-    unsigned char *capture_rgb;
-    size_t capture_rgb_bytes;
+    unsigned char *preview_rgb;
+    size_t preview_rgb_bytes;
+
+    unsigned char *capture_yuyv;
+    size_t capture_yuyv_bytes;
 
     int stream_on;
     int record_on;

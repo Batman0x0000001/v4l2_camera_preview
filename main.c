@@ -101,7 +101,13 @@ int main(int argc, char const *argv[])
         return 1;
     }
 
-    if(init_capture_rgb(&app) < 0){
+    if(alloc_preview_rgb_buffer(&app) < 0){
+        cleanup(&app);
+        SDL_Quit();
+        return 1;
+    }
+
+    if(alloc_capture_yuyv_buffer(&app) < 0){
         cleanup(&app);
         SDL_Quit();
         return 1;

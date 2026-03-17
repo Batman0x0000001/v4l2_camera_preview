@@ -3,14 +3,14 @@
 #include<string.h>
 #include"frame_queue.h"
 
-int frame_packet_init(FramePacket *pkt,size_t capacity,int width,int height){
+int frame_packet_init(FramePacket *pkt,size_t capacity,int width,int height,uint32_t pixfmt){
     if(!pkt || capacity == 0){
         return -1;
     }
     memset(pkt,0,sizeof(*pkt));
 
-    pkt->rgb = (uint8_t *)malloc(capacity);
-    if(!pkt->rgb){
+    pkt->data = (uint8_t *)malloc(capacity);
+    if(!pkt->data){
         perror("malloc");
         return -1;
     }
@@ -18,6 +18,7 @@ int frame_packet_init(FramePacket *pkt,size_t capacity,int width,int height){
     pkt->capacity = capacity;
     pkt->width = width;
     pkt->height = height;
+    pkt->pixfmt = pixfmt;
 
     return 0;
 }
@@ -27,19 +28,20 @@ void frame_packet_free(FramePacket *pkt){
         return;
     }
 
-    free(pkt->rgb);
-    pkt->rgb = NULL;
+    free(pkt->data);
+    pkt->data = NULL;
     pkt->capacity = 0;
     pkt->bytes = 0;
     pkt->width = 0;
     pkt->height = 0;
+    pkt->pixfmt = 0;
     pkt->frame_id = 0;
     pkt->meta.sequence = 0;
     pkt->meta.bytesused = 0;
     pkt->meta.timestamp_us = 0;
 }
 
-int frame_queue_init(FrameQueue *q,int capacity,size_t frame_bytes,int width,int height){
+int frame_queue_init(FrameQueue *q,int capacity,size_t frame_bytes,int width,int height,uint32_t pixfmt){
     if(!q || capacity <= 0 || frame_bytes == 0){
         return -1;
     }
@@ -60,7 +62,7 @@ int frame_queue_init(FrameQueue *q,int capacity,size_t frame_bytes,int width,int
 
     for (int i = 0; i < capacity; i++)
     {
-        if(frame_packet_init(&q->slots[i],frame_bytes,width,height) < 0){
+        if(frame_packet_init(&q->slots[i],frame_bytes,width,height,pixfmt) < 0){
             for (int j = 0; j < i; j++)
             {
                 frame_packet_free(&q->slots[j]);
@@ -129,10 +131,10 @@ void frame_queue_destroy(FrameQueue *q){
     q->stop_request = 0;
 }
 
-int frame_queue_push(FrameQueue *q,const uint8_t *rgb,size_t bytes,uint64_t frame_id,const CaptureMeta *meta){
+int frame_queue_push(FrameQueue *q,const uint8_t *data,size_t bytes,int width,int height,uint32_t pixfmt,uint64_t frame_id,const CaptureMeta *meta){
     FramePacket *slot;
 
-    if(!q || !rgb || !meta || !q->mutex){
+    if(!q || !data || !meta || !q->mutex){
         return -1;
     }
 
@@ -156,8 +158,11 @@ int frame_queue_push(FrameQueue *q,const uint8_t *rgb,size_t bytes,uint64_t fram
         return -1;
     }
 
-    memcpy(slot->rgb,rgb,bytes);
+    memcpy(slot->data,data,bytes);
     slot->bytes = bytes;
+    slot->width = width;
+    slot->height = height;
+    slot->pixfmt = pixfmt;
     slot->frame_id = frame_id;
     slot->meta = *meta;
 
@@ -174,7 +179,7 @@ FrameQueuePopResult frame_queue_pop(FrameQueue *q,FramePacket *out,int timeout_m
     int wait_ret;
     FramePacket *slot;
 
-    if(!q || !out || !out->rgb || !q->mutex){
+    if(!q || !out || !out->data || !q->mutex){
         return FRAME_QUEUE_POP_ERROR;
     }
 
@@ -210,12 +215,13 @@ FrameQueuePopResult frame_queue_pop(FrameQueue *q,FramePacket *out,int timeout_m
         return FRAME_QUEUE_POP_ERROR;
     }
 
-    memcpy(out->rgb,slot->rgb,slot->bytes);
+    memcpy(out->data,slot->data,slot->bytes);
     out->bytes = slot->bytes;
     out->frame_id = slot->frame_id;
     out->meta = slot->meta;
     out->width = slot->width;
     out->height = slot->height;
+    out->pixfmt = slot->pixfmt;
 
     q->read_index = (q->read_index + 1) % q->capacity;
     q->size--;

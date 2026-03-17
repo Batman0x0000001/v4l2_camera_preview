@@ -11,7 +11,8 @@ typedef struct CaptureMeata{
 }CaptureMeta;
 
 typedef struct FramePacket{
-    uint8_t *rgb;
+    uint8_t *data;
+    uint32_t pixfmt;
     size_t capacity;
     size_t bytes;
     int width;

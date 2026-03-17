@@ -726,11 +726,23 @@ static int capture_thread(void *userdate){
             if(!app->paused){
                 CaptureMeta meta;
                 uint64_t frame_id;
-                
+                const unsigned char *src_yuyv = (const unsigned char *)app->buffers[buf.index].start;
+                size_t copy_bytes = (size_t)buf.bytesused;
+
+                if(copy_bytes > app->capture_yuyv_bytes){
+                    fprintf(stderr, "captured bytes exceed capture_yuyv buffer\n");
+                    // 直接跳过这帧，不处理损坏的数据
+                    if (xioctl(app->fd, VIDIOC_QBUF, &buf) < 0) {
+                        perror("VIDIOC_QBUF");
+                    }
+                    continue;
+                }
+                memcpy(app->capture_yuyv,src_yuyv,copy_bytes);
+
                 //先把设备帧转移到采集线程私有缓冲
                 yuyv_to_rgb24(
-                    (const unsigned char *)app->buffers[buf.index].start,
-                    app->capture_rgb,
+                    app->capture_yuyv,
+                    app->preview_rgb,
                     app->width,
                     app->height);
 
@@ -740,7 +752,7 @@ static int capture_thread(void *userdate){
 
                 //快速更新latest,只在拷贝的时候持锁
                 SDL_LockMutex(app->latest.mutex);
-                memcpy(app->latest.rgb,app->capture_rgb,app->capture_rgb_bytes);
+                memcpy(app->latest.rgb,app->preview_rgb,app->preview_rgb_bytes);
                 app->latest.frame_id++;
                 app->latest.meta = meta;
                 frame_id = app->latest.frame_id;
@@ -749,8 +761,11 @@ static int capture_thread(void *userdate){
                 if(app->stream.enabled && app->stream_on){
                     if(frame_queue_push(
                         &app->stream.queue,
-                        app->capture_rgb,
-                        app->capture_rgb_bytes,
+                        app->capture_yuyv,
+                        copy_bytes,
+                        app->width,
+                        app->height,
+                        app->pixfmt,
                         frame_id,
                         &meta) < 0){
                         fprintf(stderr, "frame_queue_push (stream) failed\n");
@@ -760,8 +775,11 @@ static int capture_thread(void *userdate){
                 if(app->record.enabled && app->record_on){
                     if(frame_queue_push(
                         &app->record.queue,
-                        app->capture_rgb,
-                        app->capture_rgb_bytes,
+                        app->capture_yuyv,
+                        copy_bytes,
+                        app->width,
+                        app->height,
+                        app->pixfmt,
                         frame_id,
                         &meta) < 0){
                         fprintf(stderr, "frame_queue_push (record) failed\n");
@@ -1022,19 +1040,32 @@ int set_control_by_index(AppState *app,int index,int value){
     return set_control_value(app,app->controls[index].id,value);
 }
 
-int init_capture_rgb(AppState *app){
-    app->capture_rgb_bytes = (size_t)app->width * app->height * 3;
-    app->capture_rgb = (unsigned char *)malloc(app->capture_rgb_bytes);
-    if(!app->capture_rgb){
+int alloc_preview_rgb_buffer(AppState *app){
+    app->preview_rgb_bytes = (size_t)app->width * app->height * 3;
+    app->preview_rgb = (unsigned char *)malloc(app->preview_rgb_bytes);
+    if(!app->preview_rgb){
         perror("capture_rgb malloc ");
         return -1;
     }
 
-    memset(app->capture_rgb,0,app->capture_rgb_bytes);
     return 0;
 }
 
+int alloc_capture_yuyv_buffer(AppState *app){
+    app->capture_yuyv_bytes = app->sizeimage;
+    if(app->capture_yuyv_bytes == 0){
+        fprintf(stderr, "invalid capture_yuyv_bytes failed\n");
+        return -1;
+    }
 
+    app->capture_yuyv = (unsigned char *)malloc(app->capture_yuyv_bytes);
+    if(!app->capture_yuyv){
+        perror("malloc");
+        return -1;
+    }
+
+    return 0;
+}
 
 void cleanup(AppState *app){
     app->quit = 1;
@@ -1060,9 +1091,13 @@ void cleanup(AppState *app){
     app->latest.bytes = 0;
     app->latest.frame_id = 0;
 
-    free(app->capture_rgb);
-    app->capture_rgb = NULL;
-    app->capture_rgb_bytes = 0;
+    free(app->preview_rgb);
+    app->preview_rgb = NULL;
+    app->preview_rgb_bytes = 0;
+
+    free(app->capture_yuyv);
+    app->capture_yuyv = NULL;
+    app->capture_yuyv_bytes = 0;
 
     if(app->fd >= 0){
         close(app->fd);
