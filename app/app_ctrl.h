@@ -16,5 +16,5 @@ void app_select_prev_control(AppState *app);
 void app_adjust_current_control(AppState *app, int delta);
 
 int app_save_snapshot(AppState *app, const char *path);
-
+void app_print_module_overview(AppState *app);
 #endif

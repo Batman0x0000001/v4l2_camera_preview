@@ -7,130 +7,26 @@
 #include"record.h"
 #include"log.h"
 #include"app_ctrl.h"
+#include"app_config.h"
+#include"app_apply.h"
+#include"app_startup.h"
 
-int main(int argc, char const *argv[])
+int main()
 {
     AppState app;
-    const char *device = "/dev/video0";
+    AppConfig cfg;
     SDL_Event event;
 
-    if(argc > 1){
-        device = argv[1];
-    }
+    app_config_init_default(&cfg);
+    app_print_banner();
+    app_print_config(&cfg);
+    app_apply_config(&app,&cfg);
+    app_state_init(&app,cfg.device_path);
+    stream_state_init(&app,cfg.stream_url,cfg.fps);
+    record_state_init(&app,cfg.record_path,cfg.fps);
 
-    app_state_init(&app,device);
-    stream_state_init(&app,"rtsp://127.0.0.1:8554/cam",30);
-    record_state_init(&app,"record.mp4",30);
-
-    if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0){
-        fprintf(stderr, "SDL_Init failed:%s\n",SDL_GetError());
-        return -1;
-    }
-
-    app.last_stats_ms = SDL_GetTicks64();
-
-    if(open_device(&app) < 0){
-        cleanup(&app);
-        SDL_Quit();
-        return -1;
-    }
-
-    printf("V4L2 设备打开成功，能力检查通过。\n");
-
-    if(query_capability(&app) < 0){
-        cleanup(&app);
-        SDL_Quit();
-        return -1;
-    }
-
-    if (enum_formats(&app) < 0) {
-        cleanup(&app);
-        SDL_Quit();
-        return 1;
-    }
-
-    if (enum_frame_sizes(&app, app.pixfmt) < 0) {
-        cleanup(&app);
-        SDL_Quit();
-        return 1;
-    }
-
-    if (enum_frame_intervals(&app, app.pixfmt, app.width, app.height) < 0) {
-        cleanup(&app);
-        SDL_Quit();
-        return 1;
-    }
-
-    if(enum_controls(&app) < 0){
-        cleanup(&app);
-        SDL_Quit();
-        return 1;     
-    }
-
-    if (set_format(&app) < 0) {
-        cleanup(&app);
-        SDL_Quit();
-        return 1;
-    }
-
-    explain_selected_format(app.pixfmt);
-
-    if (init_mmap(&app) < 0) {
-        cleanup(&app);
-        SDL_Quit();
-        return 1;
-    }
-
-    if(init_shared_frame(&app) < 0){
-        cleanup(&app);
-        SDL_Quit();
-        return 1;
-    }
-
-    if(alloc_preview_rgb_buffer(&app) < 0){
-        cleanup(&app);
-        SDL_Quit();
-        return 1;
-    }
-
-    if(alloc_capture_yuyv_buffer(&app) < 0){
-        cleanup(&app);
-        SDL_Quit();
-        return 1;
-    }
-
-    if(display_init(&app) < 0){
-        cleanup(&app);
-        SDL_Quit();
-        return 1;
-    }
-
-    if (stream_init(&app) < 0) {
-        fprintf(stderr, "RTSP 推流初始化失败\n");
-        display_destroy(&app);
-        cleanup(&app);
-        SDL_Quit();
-        return 1;
-    }
-
-    if (record_init(&app) < 0) {
-        fprintf(stderr, "MP4 录像初始化失败\n");
-        display_destroy(&app);
-        cleanup(&app);
-        SDL_Quit();
-        return 1;
-    }
-
-    if (start_capturing(&app) < 0) {
-        cleanup(&app);
-        SDL_Quit();
-        return 1;
-    }
-
-    if(capture_start_thread(&app) < 0){
-        display_destroy(&app);
-        cleanup(&app);
-        SDL_Quit();
+    if(app_startup(&app) < 0){
+        app_shutdowm(&app);
         return 1;
     }
 
@@ -140,7 +36,7 @@ int main(int argc, char const *argv[])
     app_print_help();
     app_print_runtime_state(&app);
     app_print_current_control_status(&app);
-
+    app_print_module_overview(&app);
     while(!app.quit){
         while(SDL_PollEvent(&event)){
             if(event.type == SDL_QUIT){
@@ -150,7 +46,7 @@ int main(int argc, char const *argv[])
                 switch (event.key.keysym.sym)
                 {
                 case SDLK_s:
-                    app_save_snapshot(&app,"snapshot.ppm");
+                    app_save_snapshot(&app,cfg.snapshot_path);
                     break;
                 case SDLK_t:
                     app_toggle_stream(&app);
@@ -207,8 +103,8 @@ int main(int argc, char const *argv[])
     }
 
     display_destroy(&app);
-    cleanup(&app);
     SDL_Quit();
+    app_shutdowm(&app);
 
     return 0;
 }

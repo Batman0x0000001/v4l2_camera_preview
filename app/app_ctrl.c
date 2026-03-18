@@ -6,7 +6,7 @@
 #include "log.h"
 
 void app_print_help(void){
-    LOG_INFO("keyboard help:");
+    LOG_INFO("keyboard help:======================================");
     LOG_INFO("  esc            quit");
     LOG_INFO("  space          pause/resume capture processing");
     LOG_INFO("  t              toggle RTSP streaming");
@@ -23,7 +23,7 @@ void app_print_runtime_state(const AppState *app){
         return;
     }
 
-    LOG_INFO("runtime state:");
+    LOG_INFO("runtime state:=========================================");
     LOG_INFO("  paused=%d", app->paused);
     LOG_INFO("  stream_on=%d enabled=%d accepting=%d fatal=%d",
              app->stream_on,
@@ -64,7 +64,7 @@ void app_print_current_control_status(AppState *app){
 
     c = &app->controls[app->current_control];
     get_control_value(app, c->id,&value);
-    if(value < 0){
+    if(value < c->min || value > c->max){
         LOG_WARN("failed to get control value: %s", c->name);
         return;
     }
@@ -187,7 +187,7 @@ void app_adjust_current_control(AppState *app, int delta){
     c = &app->controls[app->current_control];
 
     get_control_value(app, c->id,&current_value);
-    if(current_value < 0){
+    if(current_value < c->min || current_value > c->max){
         LOG_WARN("failed to get current control value: %s", c->name);
         return;
     }
@@ -258,4 +258,33 @@ int app_save_snapshot(AppState *app,const char* filename){
 
     LOG_INFO("snapshot saved: %s", filename);
     return 0;
+}
+
+void app_print_module_overview(AppState *app){
+    if(!app){
+        return;
+    }
+
+    LOG_INFO("module overview:=========================================");
+    LOG_INFO("  capture: device=%s size=%dx%d pixfmt=0x%x bytesperline=%u sizeimage=%u",
+             app->device_path,
+             app->width,
+             app->height,
+             app->pixfmt,
+             app->bytesperline,
+             app->sizeimage);
+
+    LOG_INFO("  display: latest_rgb_bytes=%zu", app->latest.bytes);
+
+    LOG_INFO("  stream: url=%s enabled=%d accepting=%d fatal=%d",
+             app->stream.output_url,
+             app->stream.enabled,
+             app->stream.accepting_frames,
+             app->stream.fatal_error);
+
+    LOG_INFO("  record: path=%s enabled=%d accepting=%d fatal=%d",
+             app->record.output_path,
+             app->record.enabled,
+             app->record.accepting_frames,
+             app->record.fatal_error);
 }

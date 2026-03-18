@@ -3,18 +3,29 @@ CC := gcc
 TARGET := v4l2_camera_preview
 
 SRCS := main.c \
-        v4l2_core.c \
-		display.c \
-		stream.c \
-		record.c \
-		frame_queue.c \
-		app_ctrl.c
+        app/app_ctrl.c \
+        app/app_config.c \
+        app/app_apply.c \
+        app/app_startup.c \
+        media/frame_queue.c \
+        device/v4l2_core.c \
+        pipeline/stream.c \
+        pipeline/record.c \
+        ui/display.c \
 
 OBJS := $(SRCS:.c=.o)
 
-CFLAGS := -Wall -Wextra -O2 -g
+CFLAGS := -Wall -Wextra -O2 -g \
+          -I. \
+          -Iapp \
+          -Imedia \
+          -Idevice \
+          -Ipipeline \
+          -Iui \
+          -Iutils 
+
 PKG_CFLAGS := $(shell pkg-config --cflags sdl2 libavcodec libavformat libavutil libswscale)
-PKG_LIBS := $(shell pkg-config --libs sdl2 libavcodec libavformat libavutil libswscale)
+PKG_LIBS   := $(shell pkg-config --libs   sdl2 libavcodec libavformat libavutil libswscale)
 
 all: $(TARGET)
 

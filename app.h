@@ -13,6 +13,19 @@
 #include"media_frame.h"
 #include"frame_queue.h"
 
+typedef struct AppConfig{
+    char device_path[256];
+    int width;
+    int height;
+    int fps;
+    char stream_url[512];
+    char record_path[512];
+    char snapshot_path[512];
+
+    int start_stream_on;
+    int start_record_on;
+}AppConfig;
+
 typedef struct Buffer{
     void *start;
     size_t length;
