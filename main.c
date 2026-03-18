@@ -36,8 +36,8 @@ int main(int argc, char const *argv[])
     }
 
     app_state_init(&app,device);
-    stream_state_init(&app,"rtsp://127.0.0.1:8554/cam",25);
-    record_state_init(&app,"record.mp4",25);
+    stream_state_init(&app,"rtsp://127.0.0.1:8554/cam",30);
+    record_state_init(&app,"record.mp4",30);
 
     if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0){
         fprintf(stderr, "SDL_Init failed:%s\n",SDL_GetError());
@@ -304,6 +304,17 @@ int main(int argc, char const *argv[])
                         app.latest.meta.bytesused);
                 app.last_stats_ms = now_ms;
     }
+        }
+        {
+            if(app.stream_on && app.stream.fatal_error){
+                LOG_WARN("stream disabled due to fatal error");
+                app.stream_on = 0;
+            }
+
+            if(app.record_on && app.record.fatal_error){
+                LOG_WARN("record disabled due to fatal error");
+                app.record_on = 0;
+            }
         }
         CameraControl *c = &app.controls[app.current_control];
         int value;

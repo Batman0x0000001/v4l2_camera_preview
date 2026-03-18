@@ -62,6 +62,8 @@ typedef struct StreamState{
 
     SDL_mutex *mutex;
     int enabled;
+    int accepting_frames;
+    int fatal_error;
 
     SDL_Thread *thread;
     FrameQueue queue;
@@ -95,6 +97,8 @@ typedef struct RecordState{
 
     SDL_mutex *mutex;
     int enabled;
+    int accepting_frames;
+    int fatal_error;
 
     SDL_Thread *thread;
     FrameQueue queue;

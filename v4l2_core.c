@@ -777,7 +777,7 @@ static int capture_thread(void *userdate){
                 frame_id = app->latest.frame_id;
                 SDL_UnlockMutex(app->latest.mutex);
 
-                if(app->stream.enabled && app->stream_on){
+                if(app->stream.enabled && app->stream_on && app->stream.accepting_frames && !app->stream.fatal_error){
                     if(frame_queue_push(
                         &app->stream.queue,
                         app->capture_yuyv,
@@ -792,7 +792,7 @@ static int capture_thread(void *userdate){
                     }
                 }
 
-                if(app->record.enabled && app->record_on){
+                if(app->record.enabled && app->record_on && app->record.accepting_frames && !app->record.fatal_error){
                     if(frame_queue_push(
                         &app->record.queue,
                         app->capture_yuyv,

@@ -3,6 +3,21 @@
 #include"record.h"
 #include"log.h"
 
+static void record_enter_fatal_error(AppState *app,const char *reason){
+    if(!app){
+        return;
+    }
+
+    SDL_LockMutex(app->record.mutex);
+    if(!app->record.fatal_error){
+        app->record.fatal_error = 1;
+        app->record.accepting_frames = 0;
+        LOG_ERROR("record fatal error :%s\n",reason ? reason : "unknown");
+    }
+    SDL_UnlockMutex(app->record.mutex);
+    frame_queue_stop(&app->record.queue);
+}
+
 static int64_t timestamp_us_to_pts(uint64_t delta_us,AVRational time_base){
     return av_rescale_q((int64_t)delta_us,(AVRational){1,1000000},time_base);
 }
@@ -16,6 +31,9 @@ void record_state_init(AppState *app,const char *url,int fps){
     app->record.have_base_timestamp = 0;
     app->record.last_input_pts = AV_NOPTS_VALUE;
     app->record.frames_encoded = 0;
+    app->record.enabled = 0;
+    app->record.accepting_frames = 0;
+    app->record.fatal_error = 0;
 }
 
 static int record_init_encoder(AppState *app){
@@ -203,7 +221,16 @@ static int record_write_one_packet(AppState *app){
             return 0;
         }
         if(ret < 0){
+            LOG_ERROR("avcodec_receive_packet (record) failed: %d", ret);
             return -1;
+        }
+
+        if(app->record.pkt->pts == AV_NOPTS_VALUE || app->record.pkt->dts == AV_NOPTS_VALUE){
+            LOG_WARN("record packet has invalid timestamps before rescale: pts=%lld dts=%lld",
+                     (long long)app->record.pkt->pts,
+                     (long long)app->record.pkt->dts);
+            av_packet_unref(app->record.pkt);
+            continue;
         }
 
         av_packet_rescale_ts(
@@ -212,12 +239,26 @@ static int record_write_one_packet(AppState *app){
             app->record.video_st->time_base);
         app->record.pkt->stream_index = app->record.video_st->index;
 
+        if(app->record.pkt->pts == AV_NOPTS_VALUE || app->record.pkt->dts == AV_NOPTS_VALUE){
+            LOG_WARN("record packet has invalid timestamps after rescale: pts=%lld dts=%lld",
+                     (long long)app->record.pkt->pts,
+                     (long long)app->record.pkt->dts);
+            av_packet_unref(app->record.pkt);
+            continue;
+        }
+
         ret = av_interleaved_write_frame(app->record.ofmt_ctx,app->record.pkt);
-        av_packet_unref(app->record.pkt);
+
 
         if(ret < 0){
+            LOG_ERROR("av_interleaved_write_frame (record) failed: pts=%lld dts=%lld",
+                      (long long)app->record.pkt->pts,
+                      (long long)app->record.pkt->dts);
+            av_packet_unref(app->record.pkt);
             return -1;
         }
+
+        av_packet_unref(app->record.pkt);
     }
 }
 
@@ -242,6 +283,7 @@ static int record_consume_packet(AppState *app, const FramePacket *pkt){
     int ret;
     uint64_t delta_us;
     int64_t pts;
+    int64_t pts_raw;
 
     if(!app->record.enabled || !pkt || !pkt->data){
         return 0;
@@ -260,16 +302,22 @@ static int record_consume_packet(AppState *app, const FramePacket *pkt){
         delta_us = pkt->meta.timestamp_us - app->record.base_timestamp_us;
     }
 
-    pts = timestamp_us_to_pts(delta_us, app->record.enc_ctx->time_base);
+    pts_raw = timestamp_us_to_pts(delta_us, app->record.enc_ctx->time_base);
+    pts = pts_raw;
 
-    if(app->record.last_input_pts != AV_NOPTS_VALUE && pts < app->record.last_input_pts){
-        pts = app->record.last_input_pts;
+    if(app->record.last_input_pts != AV_NOPTS_VALUE && pts_raw <= app->record.last_input_pts){
+       LOG_WARN("record pts adjusted for monotonicity: raw=%lld last=%lld adjusted=%lld",
+             (long long)pts,
+             (long long)app->record.last_input_pts,
+             (long long)(app->record.last_input_pts + 1));
+        pts = app->record.last_input_pts + 1;
     }
     app->record.last_input_pts = pts;
 
 
     ret = av_frame_make_writable(app->record.yuv_frame);
     if(ret < 0){
+        fprintf(stderr, "av_frame_make_writable record failed\n");
         SDL_UnlockMutex(app->record.mutex);
         return -1;
     }
@@ -283,6 +331,7 @@ static int record_consume_packet(AppState *app, const FramePacket *pkt){
     src_slices[0] = pkt->data;
     if(pkt->stride <= 0){
         fprintf(stderr, "invalid record packet stride:%d\n", pkt->stride);
+        SDL_UnlockMutex(app->record.mutex);
         return -1;
     }
     src_stride[0] = pkt->stride;
@@ -295,17 +344,25 @@ static int record_consume_packet(AppState *app, const FramePacket *pkt){
         app->record.yuv_frame->data,
         app->record.yuv_frame->linesize);
 
+    if(pts == AV_NOPTS_VALUE || pts < 0){
+        SDL_UnlockMutex(app->record.mutex);
+        LOG_ERROR("invalid input frame pts for record:%lld",(long long)pts);
+        return -1;
+    }
+
     app->record.yuv_frame->pts = pts;
     app->record.frame_index++;
 
     ret = avcodec_send_frame(app->record.enc_ctx, app->record.yuv_frame);
     if(ret < 0){
+        fprintf(stderr, "avcodec_send_frame record failed\n");
         SDL_UnlockMutex(app->record.mutex);
         return -1;
     }
 
     ret = record_write_one_packet(app);
     if(ret < 0){
+        fprintf(stderr, "record_write_one_packet record failed\n");
         SDL_UnlockMutex(app->record.mutex);
         return -1;
     }
@@ -340,7 +397,8 @@ static int record_thread_main(void *userdata){
         }
 
         if(record_consume_packet(app, &pkt) < 0){
-            fprintf(stderr, "record_consume_packet failed\n");
+            record_enter_fatal_error(app, "record_consume_packet failed\n");
+            break;
         }
     }
 
@@ -349,30 +407,48 @@ static int record_thread_main(void *userdata){
 }
 
 int record_init(AppState *app){
-    if(record_init_encoder(app) < 0){
-        return -1;
-    }
-    if(record_init_buffers(app) < 0){
-        return -1;
-    }
-    if(record_init_queue(app) < 0){
-        return -1;
-    }
-    if(record_init_output(app) < 0){
+    if(!app){
         return -1;
     }
 
-    app->record.enabled = 1;
-    app->record.thread = SDL_CreateThread(record_thread_main,"record_thread",app);
-    if(!app->record.thread){
-        fprintf(stderr, "SDL_CreateThread (record) failed:%s\n", SDL_GetError());
-        return -1;
+    if(record_init_encoder(app) < 0){
+        goto fail;
     }
+    if(record_init_buffers(app) < 0){
+        goto fail;
+    }
+    if(record_init_queue(app) < 0){
+        goto fail;
+    }
+    if(record_init_output(app) < 0){
+        goto fail;
+    }
+
+    app->record.thread = SDL_CreateThread(record_thread_main, "record_thread", app);
+    if(!app->record.thread){
+        LOG_ERROR("SDL_CreateThread (record) failed: %s", SDL_GetError());
+        goto fail;
+    }
+
+    app->record.fatal_error = 0;
+    app->record.accepting_frames = 1;
+    app->record.enabled = 1;
+
     return 0;
+
+fail:
+    record_close(app);
+    return -1;
 }
 
 void record_close(AppState *app)
 {
+    if(!app){
+        return;
+    }
+
+    app->record.accepting_frames = 0;
+    
     if(app->record.thread){
         frame_queue_stop(&app->record.queue);
         SDL_WaitThread(app->record.thread, NULL);
@@ -422,8 +498,11 @@ void record_close(AppState *app)
     }
 
     app->record.enabled = 0;
+    app->record.accepting_frames = 0;
+    app->record.fatal_error = 0;
     app->record.base_timestamp_us = 0;
     app->record.have_base_timestamp = 0;
     app->record.frame_index = 0;
     app->record.last_input_pts = AV_NOPTS_VALUE;
+    app->record.frames_encoded = 0;
 }

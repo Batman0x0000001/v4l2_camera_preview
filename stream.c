@@ -3,6 +3,21 @@
 #include"stream.h"
 #include"log.h"
 
+static void stream_enter_fatal_error(AppState *app,const char *reason){
+    if(!app){
+        return;
+    }
+
+    SDL_LockMutex(app->stream.mutex);
+    if(!app->stream.fatal_error){
+        app->stream.fatal_error = 1;
+        app->stream.accepting_frames = 0;
+        LOG_ERROR("stream fatal error :%s\n",reason ? reason : "unknown");
+    }
+    SDL_UnlockMutex(app->stream.mutex);
+    frame_queue_stop(&app->stream.queue);
+}
+
 static int64_t timestamp_us_to_pts(uint64_t delta_us,AVRational time_base){
     return av_rescale_q((int64_t)delta_us,(AVRational){1,1000000},time_base);
 }
@@ -16,6 +31,9 @@ void stream_state_init(AppState *app,const char *url,int fps){
     app->stream.have_base_timestamp = 0;
     app->stream.last_input_pts = AV_NOPTS_VALUE;
     app->stream.frames_encoded = 0;
+    app->stream.enabled = 0;
+    app->stream.accepting_frames = 0;
+    app->stream.fatal_error = 0;
 }
 
 static int stream_init_encoder(AppState *app){
@@ -212,6 +230,7 @@ static int stream_consume_packet(AppState *app,const FramePacket *pkt){
     int ret;
     uint64_t delta_us;
     int64_t pts;
+    int64_t pts_raw;
 
     if(!app->stream.enabled || !pkt || !pkt->data){
         return 0;
@@ -235,10 +254,15 @@ static int stream_consume_packet(AppState *app,const FramePacket *pkt){
     }else{
         delta_us = pkt->meta.timestamp_us - app->stream.base_timestamp_us;
     }
-    pts = timestamp_us_to_pts(delta_us,app->stream.enc_ctx->time_base);
+    pts_raw = timestamp_us_to_pts(delta_us,app->stream.enc_ctx->time_base);
+    pts = pts_raw;
 
-    if(app->stream.last_input_pts != AV_NOPTS_VALUE && pts < app->stream.last_input_pts){
-        pts = app->stream.last_input_pts;
+    if(app->stream.last_input_pts != AV_NOPTS_VALUE && pts_raw <= app->stream.last_input_pts){
+        LOG_WARN("stream pts adjusted for monotonicity: raw=%lld last=%lld adjusted=%lld",
+             (long long)pts,
+             (long long)app->stream.last_input_pts,
+             (long long)(app->stream.last_input_pts + 1));
+        pts = app->stream.last_input_pts + 1;
     }
     app->stream.last_input_pts = pts;
 
@@ -315,7 +339,8 @@ static int stream_thread_main(void *userdata){
         }
 
         if(stream_consume_packet(app,&pkt) < 0){
-            fprintf(stderr, "stream_consume_packet failed\n");
+            stream_enter_fatal_error(app, "stream_consume_packet failed\n");
+            break;
         }
     }
 
@@ -324,32 +349,46 @@ static int stream_thread_main(void *userdata){
 }
 
 int stream_init(AppState *app){
-    if(stream_init_encoder(app) < 0){
+    if(!app){
         return -1;
+    }
+    if(stream_init_encoder(app) < 0){
+        goto fail;
     }
     if(stream_init_buffers(app) < 0){
-        return -1;
+        goto fail;
     }
     if(stream_init_queue(app) < 0){
-        return -1;
+        goto fail;
     }
     if(stream_init_output(app) < 0){
-        return -1;
+        goto fail;
     }
-
-    app->stream.enabled = 1;
 
     app->stream.thread = SDL_CreateThread(stream_thread_main,"stream_thread",app);
     if(!app->stream.thread){
         fprintf(stderr, "SDL_CreateThread (stream) failed:%s\n",SDL_GetError());
-        return -1;
+        goto fail;
     }
-    
+
+    app->stream.fatal_error = 0;
+    app->stream.accepting_frames = 1;
+    app->stream.enabled = 1;
+
     return 0;
+fail:    
+    stream_close(app);
+    return -1;
 }
 
 void stream_close(AppState *app)
 {
+    if(!app){
+        return;
+    }
+
+    app->stream.accepting_frames = 0;
+
     if(app->stream.thread){
         frame_queue_stop(&app->stream.queue);
         SDL_WaitThread(app->stream.thread,NULL);
@@ -398,8 +437,11 @@ void stream_close(AppState *app)
     }
 
     app->stream.enabled = 0;
+    app->stream.accepting_frames = 0;
+    app->stream.fatal_error = 0;
     app->stream.base_timestamp_us = 0;
     app->stream.have_base_timestamp = 0;
     app->stream.frame_index = 0;
     app->stream.last_input_pts = AV_NOPTS_VALUE;
+    app->stream.frames_encoded = 0;
 }
