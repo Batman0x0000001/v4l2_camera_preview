@@ -6,24 +6,7 @@
 #include"stream.h"
 #include"record.h"
 #include"log.h"
-
-static void print_control_status(const char *name, int value) {
-    static char last_name[32] = "";
-    static int  last_value    = 0;
-
-    // 内容没变化，直接返回，不打印
-    if (last_value == value && strcmp(last_name, name) == 0) {
-        return;
-    }
-
-    // 内容变了，更新缓存并打印
-    strncpy(last_name, name, sizeof(last_name) - 1);
-    last_value = value;
-
-    printf("\r%-60s", "");
-    printf("\rControl: %-20s = %-6d", name, value);
-    fflush(stdout);//每次 fflush 都要从用户态切换到内核态。
-}
+#include"app_ctrl.h"
 
 int main(int argc, char const *argv[])
 {
@@ -154,9 +137,9 @@ int main(int argc, char const *argv[])
     scan_controls(&app);
     print_controls(&app);
 
-    printf("运行中:Space 暂停/继续,[/] 调整亮度,T推流,R录像,ESC 退出\n");
-    printf("推流地址:%s\n",app.stream.output_url);
-    printf("本地录像:%s\n",app.record.output_path);
+    app_print_help();
+    app_print_runtime_state(&app);
+    app_print_current_control_status(&app);
 
     while(!app.quit){
         while(SDL_PollEvent(&event)){
@@ -167,118 +150,38 @@ int main(int argc, char const *argv[])
                 switch (event.key.keysym.sym)
                 {
                 case SDLK_s:
-                    if(display_save_latest_ppm(&app,"screenshot.ppm") < 0){
-                        fprintf(stderr,"截屏失败\n");
-                    }
+                    app_save_snapshot(&app,"snapshot.ppm");
                     break;
                 case SDLK_t:
-                    app.stream_on = !app.stream_on;
-                    printf("RTSP推流%s\n",app.stream_on?"开启":"暂停");
+                    app_toggle_stream(&app);
                     break;
                 case SDLK_r:
-                    app.record_on = !app.record_on;
-                    printf("录像%s\n",app.record_on?"开启":"暂停");
+                   app_toggle_record(&app);
                     break;
-                case SDLK_LEFTBRACKET:
-                    {
-                        struct v4l2_queryctrl qctrl;
-                        int32_t value;
-
-                        if(query_control_info(&app,V4L2_CID_BRIGHTNESS,&qctrl) == 0 &&
-                            get_control_value(&app,V4L2_CID_BRIGHTNESS,&value) == 0){
-                            value -=qctrl.step ? qctrl.step : 1;
-                            if(value < qctrl.minimum){
-                                value = qctrl.minimum;
-                            }
-                            if(set_control_value(&app,V4L2_CID_BRIGHTNESS,value) == 0){
-                                printf("亮度调整为:%d\n",value);
-                            }
-                        }
-                        break;
-                    }
-                case SDLK_RIGHTBRACKET:
-                    {
-                        struct v4l2_queryctrl qctrl;
-                        int32_t value;
-
-                        if(query_control_info(&app,V4L2_CID_BRIGHTNESS,&qctrl) == 0 &&
-                            get_control_value(&app,V4L2_CID_BRIGHTNESS,&value) == 0){
-                            value +=qctrl.step ? qctrl.step : 1;
-                            if(value > qctrl.maximum){
-                                value = qctrl.maximum;
-                            }
-                            if(set_control_value(&app,V4L2_CID_BRIGHTNESS,value) == 0){
-                                printf("亮度调整为:%d\n",value);
-                            }
-                        }
-                        break;
-                    }
-                case SDLK_e:
-                    {
-
-                        int32_t value = 0;
-
-                        if (get_control_value(&app,V4L2_CID_POWER_LINE_FREQUENCY,&value) == 0) {
-                            value++;
-                            if (value > 2)
-                                value = 0;
-
-                            if (set_control_value(&app,V4L2_CID_POWER_LINE_FREQUENCY,value) == 0) {
-                                printf("Power Line Frequency mode -> %d\n",value);
-                            }
-                        }
-                        break;
-                    }
+                case SDLK_h:
+                    app_print_help();
+                    break;
+                case SDLK_i:
+                    app_print_runtime_state(&app);
+                    app_print_current_control_status(&app);
+                    break;
                 case SDLK_LEFT:
-                    {
-                        CameraControl *c = &app.controls[app.current_control];
-                        int value;
-
-                        if(get_control_by_index(&app,app.current_control,&value) == 0){
-                            value -= c->step ? c->step : 1;
-
-                            if(value < c->min){
-                                value = c->min;
-                            }
-
-                            set_control_by_index(&app,app.current_control,value);
-                        }
-                        break;
-                    }
+                    app_adjust_current_control(&app,-1);
+                    break;
                 case SDLK_RIGHT:
-                    {
-                        CameraControl *c = &app.controls[app.current_control];
-                        int value;
-
-                        if(get_control_by_index(&app,app.current_control,&value) == 0){
-                            value += c->step ? c->step : 1;
-
-                            if(value > c->max){
-                                value = c->max;
-                            }
-
-                            set_control_by_index(&app,app.current_control,value);
-                        }
-                        break;
-                    }
+                    app_adjust_current_control(&app,+1);
+                    break;
                 case SDLK_UP:
-                    app.current_control++;
-                    if(app.current_control >= app.control_count){
-                        app.current_control = 0;
-                    }
+                    app_select_next_control(&app);
                     break;
                 case SDLK_DOWN:
-                    app.current_control--;
-                    if(app.current_control < 0){
-                        app.current_control = app.control_count - 1;
-                    }
+                    app_select_prev_control(&app);
                     break;
                 case SDLK_ESCAPE:
                     app.quit = 1;
                     break;
                 case SDLK_SPACE:
-                    app.paused = !app.paused;
-                    printf("预览%s\n",app.paused?"暂停":"继续");
+                    app_toggle_pause(&app);
                     break;
                 default:
                     break;
@@ -291,21 +194,6 @@ int main(int argc, char const *argv[])
             break;
         }
         {
-            uint64_t now_ms = SDL_GetTicks64();
-            if(now_ms - app.last_stats_ms >= 1000){
-                LOG_INFO("capture=%llu dropped=%llu stream_q_drop=%llu record_q_drop=%llu\n stream_encoded=%llu record_encoded=%llu latest_seq=%u latest_bytes=%u\n",
-                        (unsigned long long)app.frames_captured,
-                        (unsigned long long)app.frames_dropped,
-                        (unsigned long long)app.stream.queue.dropped_frames,
-                        (unsigned long long)app.record.queue.dropped_frames,
-                        (unsigned long long)app.stream.frames_encoded,
-                        (unsigned long long)app.record.frames_encoded,
-                        app.latest.meta.sequence,
-                        app.latest.meta.bytesused);
-                app.last_stats_ms = now_ms;
-    }
-        }
-        {
             if(app.stream_on && app.stream.fatal_error){
                 LOG_WARN("stream disabled due to fatal error");
                 app.stream_on = 0;
@@ -316,17 +204,6 @@ int main(int argc, char const *argv[])
                 app.record_on = 0;
             }
         }
-        CameraControl *c = &app.controls[app.current_control];
-        int value;
-        /*
-            或者直接调用get_control_value(&app, app->controls[index].id, &value) or
-            get_control_value(&app, c->id, &value)
-        */
-        if(get_control_by_index(&app,app.current_control,&value) == 0){
-            print_control_status(c->name,value);
-        }
-
-        SDL_Delay(5);
     }
 
     display_destroy(&app);

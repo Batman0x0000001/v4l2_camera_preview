@@ -7,7 +7,8 @@ SRCS := main.c \
 		display.c \
 		stream.c \
 		record.c \
-		frame_queue.c 
+		frame_queue.c \
+		app_ctrl.c
 
 OBJS := $(SRCS:.c=.o)
 
