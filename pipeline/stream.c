@@ -16,6 +16,7 @@ static void stream_enter_fatal_error(AppState *app,const char *reason){
     }
     SDL_UnlockMutex(app->stream.mutex);
     frame_queue_stop(&app->stream.queue);
+    audio_queue_stop(&app->stream.audio_queue);
 }
 
 static int64_t timestamp_us_to_pts(uint64_t delta_us,AVRational time_base){
@@ -430,6 +431,7 @@ void stream_close(AppState *app)
     }
 
     frame_queue_destroy(&app->stream.queue);
+    audio_queue_destroy(&app->stream.audio_queue);
 
     if (app->stream.mutex) {
         SDL_DestroyMutex(app->stream.mutex);

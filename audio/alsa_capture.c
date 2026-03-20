@@ -5,6 +5,73 @@
 #include"time_utils.h"
 #include"log.h"
 
+static int audio_init_output_queues(AppState *app){
+    if(!app){
+        return -1;
+    }
+
+    if(audio_queue_init(&app->stream.audio_queue,32,app->audio.period_buffer_bytes) < 0){
+        LOG_ERROR("audio_queue_init (stream) failed");
+        return -1;
+    }
+
+    if(audio_queue_init(&app->record.audio_queue,32,app->audio.period_buffer_bytes) < 0){
+        LOG_ERROR("audio_queue_init (record) failed");
+        audio_queue_destroy(&app->stream.audio_queue);
+        return -1;
+    }
+
+    return 0;
+}
+
+static void audio_distribute_chunk(AppState *app,
+                                   const uint8_t *data,
+                                   snd_pcm_uframes_t frames,
+                                   uint64_t chunk_id,
+                                   const AudioMeta *meta){
+    size_t bytes;
+
+    if(!app || !data || !meta){
+        return;
+    }
+
+    bytes = (size_t)frames * app->audio.bytes_per_frame;
+
+    if(app->stream.enabled &&
+       app->stream_on &&
+       app->stream.accepting_frames &&
+       !app->stream.fatal_error){
+        if(audio_queue_push(&app->stream.audio_queue,
+                            data,
+                            bytes,
+                            app->audio.sample_rate,
+                            app->audio.channels,
+                            app->audio.bytes_per_sample,
+                            app->audio.bytes_per_frame,
+                            chunk_id,
+                            meta) < 0){
+            LOG_WARN("audio_queue_push (stream) failed");
+        }
+    }
+
+    if(app->record.enabled &&
+       app->record_on &&
+       app->record.accepting_frames &&
+       !app->record.fatal_error){
+        if(audio_queue_push(&app->record.audio_queue,
+                            data,
+                            bytes,
+                            app->audio.sample_rate,
+                            app->audio.channels,
+                            app->audio.bytes_per_sample,
+                            app->audio.bytes_per_frame,
+                            chunk_id,
+                            meta) < 0){
+            LOG_WARN("audio_queue_push (record) failed");
+        }
+    }
+}
+
 static size_t audio_bytes_per_sample(snd_pcm_format_t fmt){
     int bits = snd_pcm_format_width(fmt);
     if(bits <= 0 || (bits % 8) != 0){
@@ -269,6 +336,9 @@ static int audio_thread_main(void *userdata){
         int running;
         snd_pcm_sframes_t frames;
         uint64_t capture_time_us;
+        uint64_t chunk_id;
+        uint64_t first_frame_index;
+        AudioMeta meta;
 
         SDL_LockMutex(app->audio.mutex);
         running = app->audio.running;
@@ -307,18 +377,24 @@ static int audio_thread_main(void *userdata){
             continue;
         }
 
-        /*
-            本阶段只把 ALSA 采集链路跑通，不进入音频队列。
-            统一时间戳仍然要记录下来，后续 AudioPacket 会直接沿用这套时间基。
-        */
         capture_time_us = app_now_monotonic_us();
 
         SDL_LockMutex(app->audio.mutex);
+
+        chunk_id = app->audio.chunks_captured + 1;
+        first_frame_index = app->audio.pcm_frames_captured;
+
         app->audio.chunks_captured++;
         app->audio.pcm_frames_captured += (uint64_t)frames;
         app->audio.last_chunk_frames = (uint64_t)frames;
         app->audio.last_capture_time_us = capture_time_us;
         SDL_UnlockMutex(app->audio.mutex);
+
+        meta.capture_time_us = capture_time_us;
+        meta.first_frame_index = first_frame_index;
+        meta.frames = (uint32_t)frames;
+
+        audio_distribute_chunk(app,app->audio.period_buffer,frames,chunk_id,&meta);
     }
 
     SDL_LockMutex(app->audio.mutex);
@@ -334,6 +410,10 @@ int audio_init(AppState *app){
     }
 
     if(audio_open_device(app) < 0){
+        goto fail;
+    }
+
+    if(audio_init_output_queues(app) < 0){
         goto fail;
     }
 

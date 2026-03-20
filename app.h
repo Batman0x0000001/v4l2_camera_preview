@@ -14,6 +14,7 @@
 #include"media_frame.h"
 #include"frame_queue.h"
 #include<alsa/asoundlib.h>
+#include"audio_queue.h"
 
 typedef struct AppConfig{
     char device_path[256];
@@ -87,6 +88,7 @@ typedef struct StreamState{
 
     SDL_Thread *thread;
     FrameQueue queue;
+    AudioQueue audio_queue;
 
     uint64_t frames_encoded;
 }StreamState;
@@ -122,6 +124,8 @@ typedef struct RecordState{
 
     SDL_Thread *thread;
     FrameQueue queue;
+    AudioQueue audio_queue;
+
 
     uint64_t frames_encoded;
 }RecordState;

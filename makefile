@@ -8,6 +8,7 @@ SRCS := main.c \
         app/app_apply.c \
         app/app_startup.c \
         media/frame_queue.c \
+        media/audio_queue.c \
         device/v4l2_core.c \
         pipeline/stream.c \
         pipeline/record.c \

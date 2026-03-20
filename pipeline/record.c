@@ -16,6 +16,7 @@ static void record_enter_fatal_error(AppState *app,const char *reason){
     }
     SDL_UnlockMutex(app->record.mutex);
     frame_queue_stop(&app->record.queue);
+    audio_queue_stop(&app->record.audio_queue);
 }
 
 static int64_t timestamp_us_to_pts(uint64_t delta_us,AVRational time_base){
@@ -491,6 +492,7 @@ void record_close(AppState *app)
     }
 
     frame_queue_destroy(&app->record.queue);
+    audio_queue_destroy(&app->record.audio_queue);
 
     if (app->record.mutex) {
         SDL_DestroyMutex(app->record.mutex);

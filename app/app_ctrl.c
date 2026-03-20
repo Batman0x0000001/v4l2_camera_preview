@@ -19,8 +19,27 @@ void app_print_help(void){
 }
 
 void app_print_runtime_state(const AppState *app){
+    int stream_audio_q_size = 0;
+    int record_audio_q_size = 0;
+    uint64_t stream_audio_dropped = 0;
+    uint64_t record_audio_dropped = 0;
+
     if(!app){
         return;
+    }
+
+    if(app->stream.audio_queue.mutex){
+        SDL_LockMutex(app->stream.audio_queue.mutex);
+        stream_audio_q_size = app->stream.audio_queue.size;
+        stream_audio_dropped = app->stream.audio_queue.dropped_chunks;
+        SDL_UnlockMutex(app->stream.audio_queue.mutex);
+    }
+
+    if(app->record.audio_queue.mutex){
+        SDL_LockMutex(app->record.audio_queue.mutex);
+        record_audio_q_size = app->record.audio_queue.size;
+        record_audio_dropped = app->record.audio_queue.dropped_chunks;
+        SDL_UnlockMutex(app->record.audio_queue.mutex);
     }
 
     LOG_INFO("runtime state:=========================================");
@@ -42,6 +61,8 @@ void app_print_runtime_state(const AppState *app){
         (unsigned long long)app->latest.frame_id,
         app->latest.meta.sequence,
         app->latest.meta.bytesused);
+
+        
     LOG_INFO("  audio enabled=%d running=%d fatal=%d xruns=%llu",
         app->audio.enabled,
         app->audio.running,
@@ -53,6 +74,13 @@ void app_print_runtime_state(const AppState *app){
         (unsigned long long)app->audio.pcm_frames_captured,
         (unsigned long long)app->audio.last_chunk_frames,
         (unsigned long long)app->audio.last_capture_time_us);
+             
+    LOG_INFO("  stream_audio_queue size=%d dropped=%llu",
+        stream_audio_q_size,
+        (unsigned long long)stream_audio_dropped);
+    LOG_INFO("  record_audio_queue size=%d dropped=%llu",
+        record_audio_q_size,
+        (unsigned long long)record_audio_dropped);
 }
 
 void app_print_current_control_status(AppState *app){
