@@ -292,14 +292,14 @@ static int record_consume_packet(AppState *app, const FramePacket *pkt){
     SDL_LockMutex(app->record.mutex);
 
     if(!app->record.have_base_timestamp){
-        app->record.base_timestamp_us = pkt->meta.timestamp_us;
+        app->record.base_timestamp_us = pkt->meta.capture_time_us;
         app->record.have_base_timestamp = 1;
     }
 
-    if(pkt->meta.timestamp_us < app->record.base_timestamp_us){
+    if(pkt->meta.capture_time_us < app->record.base_timestamp_us){
         delta_us = 0;
     }else{
-        delta_us = pkt->meta.timestamp_us - app->record.base_timestamp_us;
+        delta_us = pkt->meta.capture_time_us - app->record.base_timestamp_us;
     }
 
     pts_raw = timestamp_us_to_pts(delta_us, app->record.enc_ctx->time_base);

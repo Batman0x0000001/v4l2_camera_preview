@@ -11,6 +11,7 @@ SRCS := main.c \
         device/v4l2_core.c \
         pipeline/stream.c \
         pipeline/record.c \
+        audio/alsa_capture.c \
         ui/display.c \
 
 OBJS := $(SRCS:.c=.o)
@@ -21,11 +22,12 @@ CFLAGS := -Wall -Wextra -O2 -g \
           -Imedia \
           -Idevice \
           -Ipipeline \
+          -Iaudio \
           -Iui \
-          -Iutils 
+          -Iutils
 
-PKG_CFLAGS := $(shell pkg-config --cflags sdl2 libavcodec libavformat libavutil libswscale)
-PKG_LIBS   := $(shell pkg-config --libs   sdl2 libavcodec libavformat libavutil libswscale)
+PKG_CFLAGS := $(shell pkg-config --cflags sdl2 alsa libavcodec libavformat libavutil libswscale)
+PKG_LIBS   := $(shell pkg-config --libs   sdl2 alsa libavcodec libavformat libavutil libswscale)
 
 all: $(TARGET)
 

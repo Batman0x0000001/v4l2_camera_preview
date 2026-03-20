@@ -10,6 +10,7 @@
 #include"app_config.h"
 #include"app_apply.h"
 #include"app_startup.h"
+#include"alsa_capture.h"
 
 int main()
 {
@@ -24,6 +25,7 @@ int main()
     app_state_init(&app,cfg.device_path);
     stream_state_init(&app,cfg.stream_url,cfg.fps);
     record_state_init(&app,cfg.record_path,cfg.fps);
+    audio_state_init(&app,cfg.audio_device,cfg.audio_sample_rate,cfg.audio_channels,cfg.audio_period_frames);
 
     if(app_startup(&app) < 0){
         app_shutdowm(&app);

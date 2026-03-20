@@ -5,6 +5,7 @@
 #include "v4l2_core.h"
 #include "log.h"
 #include<unistd.h>
+#include"alsa_capture.h"
 
 int app_startup(AppState *app){
     if(!app){
@@ -86,6 +87,11 @@ int app_startup(AppState *app){
         return -1;
     }
 
+    if(audio_init(app) < 0){
+        LOG_ERROR("audio_init failed");
+        return -1;
+    }
+
     if (start_capturing(app) < 0) {
         LOG_ERROR("start_capturing failed");
         return -1;
@@ -115,6 +121,7 @@ void cleanup(AppState *app){
         app->capture_tid = NULL;
     }
 
+    audio_close(app);
     stream_close(app);
     record_close(app);
 

@@ -10,6 +10,7 @@
 #include"stream.h"
 #include"record.h"
 #include"log.h"
+#include"time_utils.h"
 
 /*
     在 V4L2 中几乎所有操作都通过它完成
@@ -663,7 +664,8 @@ int init_shared_frame(AppState *app){
     app->latest.frame_id = 0;
     app->latest.meta.sequence = 0;
     app->latest.meta.bytesused = 0;
-    app->latest.meta.timestamp_us = 0;
+    app->latest.meta.capture_time_us = 0;
+    app->latest.meta.device_time_us = 0;
 
     app->latest.mutex = SDL_CreateMutex();
     if(!app->latest.mutex){
@@ -767,7 +769,8 @@ static int capture_thread(void *userdate){
 
                 meta.sequence = buf.sequence;
                 meta.bytesused = buf.bytesused;
-                meta.timestamp_us = timeval_to_us(&buf.timestamp);
+                meta.device_time_us = timeval_to_us(&buf.timestamp);
+                meta.capture_time_us = app_now_monotonic_us();
 
                 //快速更新latest,只在拷贝的时候持锁
                 SDL_LockMutex(app->latest.mutex);

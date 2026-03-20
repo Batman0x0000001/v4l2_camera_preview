@@ -1,3 +1,4 @@
+
 #ifndef APP_H
 #define APP_H
 
@@ -12,6 +13,7 @@
 #include <libavutil/imgutils.h>
 #include"media_frame.h"
 #include"frame_queue.h"
+#include<alsa/asoundlib.h>
 
 typedef struct AppConfig{
     char device_path[256];
@@ -24,6 +26,11 @@ typedef struct AppConfig{
 
     int start_stream_on;
     int start_record_on;
+
+    char audio_device[128];
+    unsigned int audio_sample_rate;
+    int audio_channels;
+    unsigned int audio_period_frames;
 }AppConfig;
 
 typedef struct Buffer{
@@ -119,6 +126,39 @@ typedef struct RecordState{
     uint64_t frames_encoded;
 }RecordState;
 
+typedef struct AudioCaptureState{
+    char device_name[128];
+
+    snd_pcm_t *pcm;
+    snd_pcm_format_t sample_format;
+
+    unsigned int sample_rate;
+    int channels;
+
+    snd_pcm_uframes_t period_frames;
+    snd_pcm_uframes_t buffer_frames;
+
+    size_t bytes_per_sample;
+    size_t bytes_per_frame;
+
+    unsigned char *period_buffer;
+    size_t period_buffer_bytes;
+
+    SDL_mutex *mutex;
+    SDL_Thread *thread;
+
+    int enabled;
+    int running;
+    int fatal_error;
+
+    uint64_t chunks_captured;
+    uint64_t pcm_frames_captured;
+    uint64_t xruns;
+
+    uint64_t last_capture_time_us;
+    uint64_t last_chunk_frames;
+}AudioCaptureState;
+
 typedef struct AppState{
     char device_path[256];
     int fd;
@@ -143,6 +183,7 @@ typedef struct AppState{
 
     StreamState stream;
     RecordState record;
+    AudioCaptureState audio;
 
     //采集线程私有RGB临时缓冲
     unsigned char *preview_rgb;

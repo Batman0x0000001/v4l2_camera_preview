@@ -40,7 +40,8 @@ void frame_packet_free(FramePacket *pkt){
     pkt->frame_id = 0;
     pkt->meta.sequence = 0;
     pkt->meta.bytesused = 0;
-    pkt->meta.timestamp_us = 0;
+    pkt->meta.capture_time_us = 0;
+    pkt->meta.device_time_us = 0;
 }
 
 int frame_queue_init(FrameQueue *q,int capacity,size_t frame_bytes,int width,int height,int stride,uint32_t pixfmt){

@@ -246,13 +246,13 @@ static int stream_consume_packet(AppState *app,const FramePacket *pkt){
         编码器PTS（time_base单位）
     */
     if(!app->stream.have_base_timestamp){
-        app->stream.base_timestamp_us = pkt->meta.timestamp_us;
+        app->stream.base_timestamp_us = pkt->meta.capture_time_us;
         app->stream.have_base_timestamp = 1;
     }
-    if(pkt->meta.timestamp_us < app->stream.base_timestamp_us){
+    if(pkt->meta.capture_time_us < app->stream.base_timestamp_us){
         delta_us = 0;
     }else{
-        delta_us = pkt->meta.timestamp_us - app->stream.base_timestamp_us;
+        delta_us = pkt->meta.capture_time_us - app->stream.base_timestamp_us;
     }
     pts_raw = timestamp_us_to_pts(delta_us,app->stream.enc_ctx->time_base);
     pts = pts_raw;

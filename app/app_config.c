@@ -21,6 +21,11 @@ void app_config_init_default(AppConfig *cfg){
 
     cfg->start_stream_on = 1;
     cfg->start_record_on = 1;
+
+    strncpy(cfg->audio_device,"default",sizeof(cfg->audio_device) - 1);
+    cfg->audio_sample_rate = 48000;
+    cfg->audio_channels = 2;
+    cfg->audio_period_frames = 1024;
 }
 
 void app_print_banner(void){
@@ -45,4 +50,9 @@ void app_print_config(const AppConfig *cfg){
     LOG_INFO("  start_stream_on=%d start_record_on=%d",
              cfg->start_stream_on,
              cfg->start_record_on);
+    LOG_INFO("  audio_device=%s", cfg->audio_device);
+    LOG_INFO("  audio_sample_rate=%u audio_channels=%d audio_period_frames=%u",
+         cfg->audio_sample_rate,
+         cfg->audio_channels,
+         cfg->audio_period_frames);
 }

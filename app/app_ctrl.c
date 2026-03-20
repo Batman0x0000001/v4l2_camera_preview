@@ -26,22 +26,33 @@ void app_print_runtime_state(const AppState *app){
     LOG_INFO("runtime state:=========================================");
     LOG_INFO("  paused=%d", app->paused);
     LOG_INFO("  stream_on=%d enabled=%d accepting=%d fatal=%d",
-             app->stream_on,
-             app->stream.enabled,
-             app->stream.accepting_frames,
-             app->stream.fatal_error);
+        app->stream_on,
+        app->stream.enabled,
+        app->stream.accepting_frames,
+        app->stream.fatal_error);
     LOG_INFO("  record_on=%d enabled=%d accepting=%d fatal=%d",
-             app->record_on,
-             app->record.enabled,
-             app->record.accepting_frames,
-             app->record.fatal_error);
+        app->record_on,
+        app->record.enabled,
+        app->record.accepting_frames,
+        app->record.fatal_error);
     LOG_INFO("  frames_captured=%llu frames_dropped=%llu",
-             (unsigned long long)app->frames_captured,
-             (unsigned long long)app->frames_dropped);
+        (unsigned long long)app->frames_captured,
+        (unsigned long long)app->frames_dropped);
     LOG_INFO("  latest_frame_id=%llu latest_seq=%u latest_bytes=%u",
-             (unsigned long long)app->latest.frame_id,
-             app->latest.meta.sequence,
-             app->latest.meta.bytesused);
+        (unsigned long long)app->latest.frame_id,
+        app->latest.meta.sequence,
+        app->latest.meta.bytesused);
+    LOG_INFO("  audio enabled=%d running=%d fatal=%d xruns=%llu",
+        app->audio.enabled,
+        app->audio.running,
+        app->audio.fatal_error,
+        (unsigned long long)app->audio.xruns);
+
+    LOG_INFO("  audio chunks=%llu pcm_frames=%llu last_chunk_frames=%llu last_capture_us=%llu",
+        (unsigned long long)app->audio.chunks_captured,
+        (unsigned long long)app->audio.pcm_frames_captured,
+        (unsigned long long)app->audio.last_chunk_frames,
+        (unsigned long long)app->audio.last_capture_time_us);
 }
 
 void app_print_current_control_status(AppState *app){
