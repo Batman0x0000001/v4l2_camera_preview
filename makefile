@@ -27,8 +27,8 @@ CFLAGS := -Wall -Wextra -O2 -g \
           -Iui \
           -Iutils
 
-PKG_CFLAGS := $(shell pkg-config --cflags sdl2 alsa libavcodec libavformat libavutil libswscale)
-PKG_LIBS   := $(shell pkg-config --libs   sdl2 alsa libavcodec libavformat libavutil libswscale)
+PKG_CFLAGS := $(shell pkg-config --cflags sdl2 alsa libavcodec libavformat libavutil libswscale libswresample)
+PKG_LIBS   := $(shell pkg-config --libs   sdl2 alsa libavcodec libavformat libavutil libswscale libswresample)
 
 all: $(TARGET)
 

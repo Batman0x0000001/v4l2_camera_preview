@@ -25,7 +25,7 @@ void app_config_init_default(AppConfig *cfg){
     strncpy(cfg->audio_device,"default",sizeof(cfg->audio_device) - 1);
     cfg->audio_sample_rate = 48000;
     cfg->audio_channels = 2;
-    cfg->audio_period_frames = 1024;
+    cfg->audio_period_frames = 2048;
 }
 
 void app_print_banner(void){

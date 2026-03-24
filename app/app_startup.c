@@ -77,6 +77,11 @@ int app_startup(AppState *app){
         return -1;
     }
 
+    if(audio_init(app) < 0){
+        LOG_ERROR("audio_init failed");
+        return -1;
+    }
+
     if (stream_init(app) < 0) {
         LOG_ERROR("stream_init failed");
         return -1;
@@ -84,11 +89,6 @@ int app_startup(AppState *app){
 
     if (record_init(app) < 0) {
         LOG_ERROR("record_init failed");
-        return -1;
-    }
-
-    if(audio_init(app) < 0){
-        LOG_ERROR("audio_init failed");
         return -1;
     }
 

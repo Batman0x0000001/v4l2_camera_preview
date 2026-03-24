@@ -15,7 +15,7 @@ static int audio_init_output_queues(AppState *app){
         return -1;
     }
 
-    if(audio_queue_init(&app->record.audio_queue,32,app->audio.period_buffer_bytes) < 0){
+    if(audio_queue_init(&app->record.audio_queue,256,app->audio.period_buffer_bytes) < 0){
         LOG_ERROR("audio_queue_init (record) failed");
         audio_queue_destroy(&app->stream.audio_queue);
         return -1;

@@ -15,6 +15,9 @@
 #include"frame_queue.h"
 #include<alsa/asoundlib.h>
 #include"audio_queue.h"
+#include<libswresample/swresample.h>
+#include<libavutil/channel_layout.h>
+#include<libavutil/audio_fifo.h>
 
 typedef struct AppConfig{
     char device_path[256];
@@ -96,26 +99,51 @@ typedef struct StreamState{
 typedef struct RecordState{
     char output_path[512];
 
+    //video
     const AVCodec *encoder;
     AVCodecContext *enc_ctx;
-
-    AVFormatContext *ofmt_ctx;
     AVStream *video_st;
-
-    /*
-        不透明结构体  不知道这个结构体有多大，无法分配内存
-        而指针大小固定是8字节，可以声明
-    */
     struct SwsContext *sws_ctx;
-
     AVFrame *yuv_frame;
     AVPacket *pkt;
 
+    //audio
+    const AVCodec *audio_encoder;
+    AVCodecContext *audio_enc_ctx;
+    AVStream *audio_st;
+    SwrContext *swr_ctx;
+    AVFrame *audio_frame;
+    AVPacket *audio_pkt;
+    AVAudioFifo *audio_fifo;
+
+
+    AVFormatContext *ofmt_ctx;
     int fps;
     int64_t frame_index;
-    uint64_t base_timestamp_us;
-    int have_base_timestamp;
+
+    /*
+        录像模块内部统一媒体时间起点：
+        视频和音频都挂在它上面。
+    */
+    uint64_t media_base_timestamp_us;
+    int have_media_base_timestamp;
+
+    //视频输入 PTS 的单调性保护
     int64_t last_input_pts;
+
+
+    /*
+        音频锚点：
+        第一块音频到达时，既记下它的 capture_time_us，
+        也记下它在整条音频流里的 first_frame_index。
+        后续音频 PTS 用这两个量一起推导。
+    */
+    uint64_t audio_anchor_capture_time_us;
+    uint64_t audio_anchor_first_frame_index;
+    int have_audio_anchor;
+
+    //下一个待编码音频帧的 pts（单位：audio time_base）
+    int64_t audio_next_pts;
 
     SDL_mutex *mutex;
     int enabled;
@@ -126,8 +154,16 @@ typedef struct RecordState{
     FrameQueue queue;
     AudioQueue audio_queue;
 
-
     uint64_t frames_encoded;
+    uint64_t audio_frames_encoded;
+    uint64_t audio_chunks_consumed;
+
+
+
+    uint64_t base_timestamp_us;
+    int have_base_timestamp;
+
+    
 }RecordState;
 
 typedef struct AudioCaptureState{
