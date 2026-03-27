@@ -239,3 +239,17 @@ AudioQueuePopResult audio_queue_pop(AudioQueue *q,AudioPacket *out,int timeout_m
     SDL_UnlockMutex(q->mutex);
     return AUDIO_QUEUE_POP_OK;
 }
+
+void audio_queue_flush(AudioQueue *q){
+    if(!q || !q->mutex){
+        return;
+    }
+
+    SDL_LockMutex(q->mutex);
+
+    q->dropped_chunks += (uint64_t)q->size;
+    q->size = 0;
+    q->read_index = q->write_index;
+
+    SDL_UnlockMutex(q->mutex);
+}

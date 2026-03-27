@@ -7,6 +7,7 @@ SRCS := main.c \
         app/app_config.c \
         app/app_apply.c \
         app/app_startup.c \
+        app/app_clock.c \
         media/frame_queue.c \
         media/audio_queue.c \
         device/v4l2_core.c \
@@ -14,6 +15,7 @@ SRCS := main.c \
         pipeline/record.c \
         audio/alsa_capture.c \
         ui/display.c \
+        utils/path_utils.c \
 
 OBJS := $(SRCS:.c=.o)
 
@@ -39,7 +41,7 @@ $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) $(PKG_CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJS) $(TARGET) record.mp4
+	rm -f $(OBJS) $(TARGET) ./recordings/* ./snapshots/*
 
 run: $(TARGET)
 	./$(TARGET)

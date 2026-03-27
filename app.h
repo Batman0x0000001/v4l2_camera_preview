@@ -24,12 +24,15 @@ typedef struct AppConfig{
     int width;
     int height;
     int fps;
+
     char stream_url[512];
-    char record_path[512];
-    char snapshot_path[512];
+
+    char record_dir[256];
+    char snapshot_dir[256];
 
     int start_stream_on;
     int start_record_on;
+    int auto_record_on_start;
 
     char audio_device[128];
     unsigned int audio_sample_rate;
@@ -98,6 +101,20 @@ typedef struct StreamState{
 
 typedef struct RecordState{
     char output_path[512];
+
+    //默认输出目录
+    char output_dir[512];
+
+
+    //当前这次会话最终落盘的文件名
+    char active_output_path[512];
+
+    int session_active;
+    int stopping_session;
+
+    uint64_t session_count;
+    uint64_t session_start_media_us;
+    uint64_t session_last_media_us;
 
     //video
     const AVCodec *encoder;
@@ -243,6 +260,17 @@ typedef struct AppState{
 
     int quit;
     int paused;
+
+
+    SDL_mutex *clock_mutex;
+
+    uint64_t pause_begin_us;
+    uint64_t total_paused_us;
+
+    uint64_t paused_video_frames_discarded;
+    uint64_t paused_audio_chunks_discarded;
+    uint64_t paused_audio_frames_discarded;
+    
 }AppState;
 
 #endif

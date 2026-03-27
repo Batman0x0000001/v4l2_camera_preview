@@ -11,6 +11,7 @@
 #include"record.h"
 #include"log.h"
 #include"time_utils.h"
+#include"app_clock.h"
 
 /*
     在 V4L2 中几乎所有操作都通过它完成
@@ -767,10 +768,26 @@ static int capture_thread(void *userdate){
                     app->width,
                     app->height);
 
+
+                if(app_is_paused(app)){
+                    if(app->clock_mutex){
+                        SDL_LockMutex(app->clock_mutex);
+                        app->paused_video_frames_discarded++;
+                        SDL_UnlockMutex(app->clock_mutex);
+                    }
+
+                    if(xioctl(app->fd, VIDIOC_QBUF, &buf) < 0){
+                        perror("VIDIOC_QBUF");
+                        break;
+                    }
+
+                    continue;
+                }
+                
                 meta.sequence = buf.sequence;
                 meta.bytesused = buf.bytesused;
                 meta.device_time_us = timeval_to_us(&buf.timestamp);
-                meta.capture_time_us = app_now_monotonic_us();
+                meta.capture_time_us = app_media_clock_us(app);
 
                 //快速更新latest,只在拷贝的时候持锁
                 SDL_LockMutex(app->latest.mutex);
@@ -855,40 +872,90 @@ static const char *ctrl_type_name(__u32 type){
     }
 }
 
+// int enum_controls(AppState *app){
+//     struct v4l2_queryctrl qctrl;
+
+//     memset(&qctrl,0,sizeof(struct v4l2_queryctrl));
+//     qctrl.id = V4L2_CTRL_FLAG_NEXT_CTRL;
+
+//     printf("设备支持的V4L2 controls:\n");
+
+//     while (xioctl(app->fd,VIDIOC_QUERYCTRL,&qctrl) == 0)
+//     {
+//         if(!(qctrl.flags & V4L2_CTRL_FLAG_DISABLED)){
+//             printf("id=0x%08x name=%s type=%s min=%d max=%d step=%d default=%d flags=0x%x\n",
+//                    qctrl.id,
+//                    qctrl.name,
+//                    ctrl_type_name(qctrl.type),
+//                    qctrl.minimum,
+//                    qctrl.maximum,
+//                    qctrl.step,
+//                    qctrl.default_value,
+//                    qctrl.flags);
+
+//             if(qctrl.type == V4L2_CTRL_TYPE_MENU){
+//                 enum_control_menu(app,&qctrl);
+//             }
+//         }
+//         qctrl.id |= V4L2_CTRL_FLAG_NEXT_CTRL;
+//     }
+
+//     if(errno != EINVAL){
+//         perror("VIDIOC_QUERYCTRL");
+//         return -1;
+//     }
+    
+//     return 0;
+// }
+
 int enum_controls(AppState *app){
     struct v4l2_queryctrl qctrl;
+    int got_any = 0;
 
-    memset(&qctrl,0,sizeof(struct v4l2_queryctrl));
+    memset(&qctrl, 0, sizeof(qctrl));
     qctrl.id = V4L2_CTRL_FLAG_NEXT_CTRL;
 
-    printf("设备支持的V4L2 controls:\n");
+    app->control_count = 0;
 
-    while (xioctl(app->fd,VIDIOC_QUERYCTRL,&qctrl) == 0)
-    {
+    for(;;){
+        if(xioctl(app->fd, VIDIOC_QUERYCTRL, &qctrl) < 0){
+            if(errno == EINVAL){
+                /* 正常结束：没有下一个 control 了 */
+                break;
+            }
+
+            /*
+             * 对部分 UVC 设备，后续某个 control 可能返回 EIO。
+             * 这里不要把整个启动流程判死，保留已成功枚举的结果。
+             */
+            perror("VIDIOC_QUERYCTRL");
+            fprintf(stderr,
+                    "[WARN] stop control enumeration early, keep %d valid controls\n",
+                    app->control_count);
+            break;
+        }
+
+        got_any = 1;
+
+        printf("设备支持的V4L2 controls:\n");
         if(!(qctrl.flags & V4L2_CTRL_FLAG_DISABLED)){
-            printf("id=0x%08x name=%s type=%s min=%d max=%d step=%d default=%d flags=0x%x\n",
-                   qctrl.id,
-                   qctrl.name,
-                   ctrl_type_name(qctrl.type),
-                   qctrl.minimum,
-                   qctrl.maximum,
-                   qctrl.step,
-                   qctrl.default_value,
-                   qctrl.flags);
-
-            if(qctrl.type == V4L2_CTRL_TYPE_MENU){
-                enum_control_menu(app,&qctrl);
+            /* 只保存你真正关心的控制项 */
+            if(app->control_count < MAX_CONTROLS){
+                CameraControl *c = &app->controls[app->control_count++];
+                c->id = qctrl.id;
+                snprintf(c->name, sizeof(c->name), "%s", (char *)qctrl.name);
+                c->type = qctrl.type;
+                c->min = qctrl.minimum;
+                c->max = qctrl.maximum;
+                c->step = qctrl.step;
+                c->def = qctrl.default_value;
             }
         }
+
         qctrl.id |= V4L2_CTRL_FLAG_NEXT_CTRL;
     }
 
-    if(errno != EINVAL){
-        perror("VIDIOC_QUERYCTRL");
-        return -1;
-    }
-    
-    return 0;
+    return got_any ? 0 : 0;
 }
 
 int get_control_value(AppState *app,uint32_t id,int32_t *value){

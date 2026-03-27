@@ -4,6 +4,7 @@
 #include"alsa_capture.h"
 #include"time_utils.h"
 #include"log.h"
+#include"app_clock.h"
 
 static int audio_init_output_queues(AppState *app){
     if(!app){
@@ -377,7 +378,17 @@ static int audio_thread_main(void *userdata){
             continue;
         }
 
-        capture_time_us = app_now_monotonic_us();
+        if(app_is_paused(app)){
+            if(app->clock_mutex){
+                SDL_LockMutex(app->clock_mutex);
+                app->paused_audio_chunks_discarded++;
+                app->paused_audio_frames_discarded += (uint64_t)frames;
+                SDL_UnlockMutex(app->clock_mutex);
+            }
+            continue;
+        }
+
+        capture_time_us = app_media_clock_us(app);
 
         SDL_LockMutex(app->audio.mutex);
 

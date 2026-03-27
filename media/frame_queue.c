@@ -234,3 +234,17 @@ FrameQueuePopResult frame_queue_pop(FrameQueue *q,FramePacket *out,int timeout_m
     SDL_UnlockMutex(q->mutex);
     return FRAME_QUEUE_POP_OK;
 }
+
+void frame_queue_flush(FrameQueue *q){
+    if(!q || !q->mutex){
+        return;
+    }
+
+    SDL_LockMutex(q->mutex);
+
+    q->dropped_frames += (uint64_t)q->size;
+    q->size = 0;
+    q->read_index = q->write_index;
+
+    SDL_UnlockMutex(q->mutex);    
+}

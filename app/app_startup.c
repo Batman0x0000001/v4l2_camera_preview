@@ -6,6 +6,7 @@
 #include "log.h"
 #include<unistd.h>
 #include"alsa_capture.h"
+#include"app_clock.h"
 
 int app_startup(AppState *app){
     if(!app){
@@ -14,6 +15,11 @@ int app_startup(AppState *app){
 
     if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0){
         LOG_ERROR("SDL_Init failed");
+        return -1;
+    }
+
+    if(app_clock_init(app) < 0){
+        LOG_ERROR("app_clock_init failed");
         return -1;
     }
 
@@ -27,32 +33,32 @@ int app_startup(AppState *app){
         return -1;
     }
 
-    if (enum_formats(app) < 0) {
+    if(enum_formats(app) < 0){
         LOG_ERROR("enum_formats failed");
         return -1;
     }
 
-    if (enum_frame_sizes(app, app->pixfmt) < 0) {
+    if(enum_frame_sizes(app, app->pixfmt) < 0){
         LOG_ERROR("enum_frame_sizes failed");
         return -1;
     }
 
-    if (enum_frame_intervals(app, app->pixfmt, app->width, app->height) < 0) {
+    if(enum_frame_intervals(app, app->pixfmt, app->width, app->height) < 0){
         LOG_ERROR("enum_frame_intervals failed");
         return -1;
     }
 
     if(enum_controls(app) < 0){
         LOG_ERROR("enum_controls failed");
-        return -1;     
+        return -1;
     }
 
-    if (set_format(app) < 0) {
+    if(set_format(app) < 0){
         LOG_ERROR("set_format failed");
         return -1;
     }
 
-    if (init_mmap(app) < 0) {
+    if(init_mmap(app) < 0){
         LOG_ERROR("init_mmap failed");
         return -1;
     }
@@ -82,17 +88,17 @@ int app_startup(AppState *app){
         return -1;
     }
 
-    if (stream_init(app) < 0) {
+    if(stream_init(app) < 0){
         LOG_ERROR("stream_init failed");
         return -1;
     }
 
-    if (record_init(app) < 0) {
+    if(record_init(app) < 0){
         LOG_ERROR("record_init failed");
         return -1;
     }
 
-    if (start_capturing(app) < 0) {
+    if(start_capturing(app) < 0){
         LOG_ERROR("start_capturing failed");
         return -1;
     }
@@ -115,6 +121,11 @@ void app_shutdowm(AppState *app){
 
 void cleanup(AppState *app){
     app->quit = 1;
+
+    if(app->record.session_active){
+        (void)record_session_stop(app);
+        app->record_on = 0;
+    }
 
     if(app->capture_tid){
         SDL_WaitThread(app->capture_tid,NULL);
@@ -150,4 +161,6 @@ void cleanup(AppState *app){
         close(app->fd);
         app->fd = -1;
     }
+
+    app_clock_destroy(app);
 }

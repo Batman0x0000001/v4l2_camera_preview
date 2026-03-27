@@ -33,4 +33,5 @@ void frame_queue_destroy(FrameQueue *q);
 int frame_queue_push(FrameQueue *q,const uint8_t *rgb,size_t bytes,int width,int height,int stride,uint32_t pixfmt, uint64_t frame_id,const CaptureMeta *meta);
 FrameQueuePopResult frame_queue_pop(FrameQueue *q,FramePacket *out,int timeout_ms);
 
+void frame_queue_flush(FrameQueue *q);
 #endif

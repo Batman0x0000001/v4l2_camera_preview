@@ -79,4 +79,5 @@ int audio_queue_push(AudioQueue *q,
 
 AudioQueuePopResult audio_queue_pop(AudioQueue *q,AudioPacket *out,int timeout_ms);
 
+void audio_queue_flush(AudioQueue *q);
 #endif

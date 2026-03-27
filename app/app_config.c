@@ -16,11 +16,12 @@ void app_config_init_default(AppConfig *cfg){
     cfg->fps = 30;
 
     strncpy(cfg->stream_url, "rtsp://127.0.0.1:8554/cam", sizeof(cfg->stream_url) - 1);
-    strncpy(cfg->record_path, "record.mp4", sizeof(cfg->record_path) - 1);
-    strncpy(cfg->snapshot_path, "snapshot.ppm", sizeof(cfg->snapshot_path) - 1);
+    strncpy(cfg->record_dir, "recordings", sizeof(cfg->record_dir) - 1);
+    strncpy(cfg->snapshot_dir, "snapshots", sizeof(cfg->snapshot_dir) - 1);
 
-    cfg->start_stream_on = 1;
-    cfg->start_record_on = 1;
+    cfg->start_stream_on = 0;
+    cfg->start_record_on = 0;
+    cfg->auto_record_on_start = 0;
 
     strncpy(cfg->audio_device,"default",sizeof(cfg->audio_device) - 1);
     cfg->audio_sample_rate = 48000;
@@ -31,7 +32,7 @@ void app_config_init_default(AppConfig *cfg){
 void app_print_banner(void){
     LOG_INFO("========================================");
     LOG_INFO(" Linux Camera Media Pipeline Demo");
-    LOG_INFO(" V4L2 + SDL + FFmpeg + RTSP + MP4");
+    LOG_INFO(" V4L2 + ALSA + SDL + FFmpeg + MP4");
     LOG_INFO(" version: 1.0");
     LOG_INFO("========================================");
 }
@@ -45,8 +46,6 @@ void app_print_config(const AppConfig *cfg){
     LOG_INFO("  device_path=%s", cfg->device_path);
     LOG_INFO("  width=%d height=%d fps=%d", cfg->width, cfg->height, cfg->fps);
     LOG_INFO("  stream_url=%s", cfg->stream_url);
-    LOG_INFO("  record_path=%s", cfg->record_path);
-    LOG_INFO("  snapshot_path=%s", cfg->snapshot_path);
     LOG_INFO("  start_stream_on=%d start_record_on=%d",
              cfg->start_stream_on,
              cfg->start_record_on);
@@ -55,4 +54,7 @@ void app_print_config(const AppConfig *cfg){
          cfg->audio_sample_rate,
          cfg->audio_channels,
          cfg->audio_period_frames);
+    LOG_INFO("  record_dir=%s", cfg->record_dir);
+    LOG_INFO("  snapshot_dir=%s", cfg->snapshot_dir);
+    LOG_INFO("  auto_record_on_start=%d", cfg->auto_record_on_start);
 }

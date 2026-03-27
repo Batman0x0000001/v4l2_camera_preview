@@ -4,6 +4,8 @@
 #include "display.h"
 #include "v4l2_core.h"
 #include "log.h"
+#include"app_clock.h"
+#include"record.h"
 
 void app_print_help(void){
     LOG_INFO("keyboard help:======================================");
@@ -44,11 +46,11 @@ void app_print_runtime_state(const AppState *app){
 
     LOG_INFO("runtime state:=========================================");
     LOG_INFO("  paused=%d", app->paused);
-    LOG_INFO("  stream_on=%d enabled=%d accepting=%d fatal=%d",
-        app->stream_on,
-        app->stream.enabled,
-        app->stream.accepting_frames,
-        app->stream.fatal_error);
+    // LOG_INFO("  stream_on=%d enabled=%d accepting=%d fatal=%d",
+    //     app->stream_on,
+    //     app->stream.enabled,
+    //     app->stream.accepting_frames,
+    //     app->stream.fatal_error);
     LOG_INFO("  record_on=%d enabled=%d accepting=%d fatal=%d",
         app->record_on,
         app->record.enabled,
@@ -75,12 +77,35 @@ void app_print_runtime_state(const AppState *app){
         (unsigned long long)app->audio.last_chunk_frames,
         (unsigned long long)app->audio.last_capture_time_us);
              
-    LOG_INFO("  stream_audio_queue size=%d dropped=%llu",
-        stream_audio_q_size,
-        (unsigned long long)stream_audio_dropped);
+    // LOG_INFO("  stream_audio_queue size=%d dropped=%llu",
+    //     stream_audio_q_size,
+    //     (unsigned long long)stream_audio_dropped);
     LOG_INFO("  record_audio_queue size=%d dropped=%llu",
         record_audio_q_size,
         (unsigned long long)record_audio_dropped);
+
+    LOG_INFO("  total_paused_us=%llu (%.3f s)",
+         (unsigned long long)app->total_paused_us,
+         (double)app->total_paused_us / 1000000.0);
+
+    LOG_INFO("  paused_video_frames_discarded=%llu",
+            (unsigned long long)app->paused_video_frames_discarded);
+
+    LOG_INFO("  paused_audio_chunks_discarded=%llu paused_audio_frames_discarded=%llu",
+            (unsigned long long)app->paused_audio_chunks_discarded,
+            (unsigned long long)app->paused_audio_frames_discarded);
+    LOG_INFO("  record session_active=%d stopping=%d session_count=%llu",
+         app->record.session_active,
+         app->record.stopping_session,
+         (unsigned long long)app->record.session_count);
+
+    LOG_INFO("  active_output_path=%s",
+            app->record.session_active ? app->record.active_output_path : "(none)");
+
+    LOG_INFO("  record video_frames_encoded=%llu audio_frames_encoded=%llu audio_chunks_consumed=%llu",
+            (unsigned long long)app->record.frames_encoded,
+            (unsigned long long)app->record.audio_frames_encoded,
+            (unsigned long long)app->record.audio_chunks_consumed);
 }
 
 void app_print_current_control_status(AppState *app){
@@ -121,12 +146,30 @@ void app_print_current_control_status(AppState *app){
 }
 
 void app_toggle_pause(AppState *app){
+    uint64_t total_paused_us;
+
     if(!app){
         return;
     }
 
-    app->paused = !app->paused;
-    LOG_INFO("pause toggled: paused=%d", app->paused);
+    if(app_is_paused(app)){
+        app_pause_end(app);
+        total_paused_us = app_total_paused_us(app);
+
+        LOG_INFO("resume: total_paused_us=%llu (%.3f s)",
+                 (unsigned long long)total_paused_us,
+                 (double)total_paused_us / 1000000.0);
+    }else{
+        app_pause_begin(app);
+
+        /*
+            立即清掉录像模块尚未消费的输入，
+            避免“按下暂停后还继续录一小段”的拖尾。
+        */
+        record_notify_pause(app);
+
+        LOG_INFO("pause begin");
+    }
 }
 
 void app_toggle_stream(AppState *app){
@@ -148,6 +191,7 @@ void app_toggle_stream(AppState *app){
     LOG_INFO("stream toggled: stream_on=%d", app->stream_on);
 }
 
+
 void app_toggle_record(AppState *app){
     if(!app){
         return;
@@ -163,8 +207,21 @@ void app_toggle_record(AppState *app){
         return;
     }
 
-    app->record_on = !app->record_on;
-    LOG_INFO("record toggled: record_on=%d", app->record_on);
+    if(app->record.session_active){
+        if(record_session_stop(app) < 0){
+            LOG_WARN("record_session_stop failed");
+            return;
+        }
+        app->record_on = 0;
+        LOG_INFO("record stopped");
+    }else{
+        if(record_session_start(app) < 0){
+            LOG_WARN("record_session_start failed");
+            return;
+        }
+        app->record_on = 1;
+        LOG_INFO("record started: %s", app->record.active_output_path);
+    }
 }
 
 void app_select_next_control(AppState *app){
