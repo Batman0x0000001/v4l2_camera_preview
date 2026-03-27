@@ -1,17 +1,58 @@
-#include<stdio.h>
-#include<stdlib.h>
-#include<string.h>
-#include"frame_queue.h"
+#include "frame_queue.h"
 
-int frame_packet_init(FramePacket *pkt,size_t capacity,int width,int height,int stride,uint32_t pixfmt){
-    if(!pkt || capacity == 0){
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static void frame_packet_reset_fields(FramePacket *pkt)
+{
+    if (!pkt) {
+        return;
+    }
+
+    pkt->bytes = 0;
+    pkt->width = 0;
+    pkt->height = 0;
+    pkt->stride = 0;
+    pkt->pixfmt = 0;
+    pkt->frame_id = 0;
+
+    pkt->meta.sequence = 0;
+    pkt->meta.bytesused = 0;
+    pkt->meta.capture_time_us = 0;
+    pkt->meta.device_time_us = 0;
+}
+
+static void frame_queue_reset_state(FrameQueue *q)
+{
+    if (!q) {
+        return;
+    }
+
+    q->capacity = 0;
+    q->size = 0;
+    q->read_index = 0;
+    q->write_index = 0;
+    q->dropped_frames = 0;
+    q->stop_request = 0;
+}
+
+int frame_packet_init(FramePacket *pkt,
+                      size_t capacity,
+                      int width,
+                      int height,
+                      int stride,
+                      uint32_t pixfmt)
+{
+    if (!pkt || capacity == 0) {
         return -1;
     }
-    memset(pkt,0,sizeof(*pkt));
+
+    memset(pkt, 0, sizeof(*pkt));
 
     pkt->data = (uint8_t *)malloc(capacity);
-    if(!pkt->data){
-        perror("malloc");
+    if (!pkt->data) {
+        perror("malloc frame packet");
         return -1;
     }
 
@@ -24,35 +65,50 @@ int frame_packet_init(FramePacket *pkt,size_t capacity,int width,int height,int 
     return 0;
 }
 
-void frame_packet_free(FramePacket *pkt){
-    if(!pkt){
+void frame_packet_free(FramePacket *pkt)
+{
+    if (!pkt) {
         return;
     }
 
     free(pkt->data);
     pkt->data = NULL;
     pkt->capacity = 0;
-    pkt->bytes = 0;
-    pkt->width = 0;
-    pkt->height = 0;
-    pkt->stride = 0;
-    pkt->pixfmt = 0;
-    pkt->frame_id = 0;
-    pkt->meta.sequence = 0;
-    pkt->meta.bytesused = 0;
-    pkt->meta.capture_time_us = 0;
-    pkt->meta.device_time_us = 0;
+
+    frame_packet_reset_fields(pkt);
 }
 
-int frame_queue_init(FrameQueue *q,int capacity,size_t frame_bytes,int width,int height,int stride,uint32_t pixfmt){
-    if(!q || capacity <= 0 || frame_bytes == 0){
+static void frame_queue_free_slots(FrameQueue *q)
+{
+    if (!q || !q->slots) {
+        return;
+    }
+
+    for (int i = 0; i < q->capacity; i++) {
+        frame_packet_free(&q->slots[i]);
+    }
+
+    free(q->slots);
+    q->slots = NULL;
+}
+
+int frame_queue_init(FrameQueue *q,
+                     int capacity,
+                     size_t frame_bytes,
+                     int width,
+                     int height,
+                     int stride,
+                     uint32_t pixfmt)
+{
+    if (!q || capacity <= 0 || frame_bytes == 0) {
         return -1;
     }
 
-    memset(q,0,sizeof(*q));
-    q->slots = (FramePacket *)calloc((size_t)capacity,sizeof(FramePacket));
-    if(!q->slots){
-        perror("calloc");
+    memset(q, 0, sizeof(*q));
+
+    q->slots = (FramePacket *)calloc((size_t)capacity, sizeof(FramePacket));
+    if (!q->slots) {
+        perror("calloc frame queue slots");
         return -1;
     }
 
@@ -63,37 +119,43 @@ int frame_queue_init(FrameQueue *q,int capacity,size_t frame_bytes,int width,int
     q->dropped_frames = 0;
     q->stop_request = 0;
 
-    for (int i = 0; i < capacity; i++)
-    {
-        if(frame_packet_init(&q->slots[i],frame_bytes,width,height,stride,pixfmt) < 0){
-            for (int j = 0; j < i; j++)
-            {
-                frame_packet_free(&q->slots[j]);
-                free(q->slots);
-                q->slots = NULL;
-                return -1;
-            }
-            
+    for (int i = 0; i < capacity; i++) {
+        if (frame_packet_init(&q->slots[i],
+                              frame_bytes,
+                              width,
+                              height,
+                              stride,
+                              pixfmt) < 0) {
+            frame_queue_free_slots(q);
+            frame_queue_reset_state(q);
+            return -1;
         }
     }
 
     q->mutex = SDL_CreateMutex();
-    if(!q->mutex){
-        fprintf(stderr, "SDL_CreateMutex failed:%s\n",SDL_GetError() );
+    if (!q->mutex) {
+        fprintf(stderr, "SDL_CreateMutex(frame_queue) failed: %s\n", SDL_GetError());
+        frame_queue_free_slots(q);
+        frame_queue_reset_state(q);
         return -1;
     }
 
     q->not_empty = SDL_CreateCond();
-    if(!q->not_empty){
-        fprintf(stderr, "SDL_CreateCond failed\n:%s", SDL_GetError());
+    if (!q->not_empty) {
+        fprintf(stderr, "SDL_CreateCond(frame_queue) failed: %s\n", SDL_GetError());
+        SDL_DestroyMutex(q->mutex);
+        q->mutex = NULL;
+        frame_queue_free_slots(q);
+        frame_queue_reset_state(q);
         return -1;
     }
 
     return 0;
 }
 
-void frame_queue_stop(FrameQueue *q){
-    if(!q || !q->mutex){
+void frame_queue_stop(FrameQueue *q)
+{
+    if (!q || !q->mutex) {
         return;
     }
 
@@ -103,65 +165,67 @@ void frame_queue_stop(FrameQueue *q){
     SDL_UnlockMutex(q->mutex);
 }
 
-void frame_queue_destroy(FrameQueue *q){
-    if(!q){
+void frame_queue_destroy(FrameQueue *q)
+{
+    if (!q) {
         return;
     }
 
-    if(q->not_empty){
+    if (q->not_empty) {
         SDL_DestroyCond(q->not_empty);
         q->not_empty = NULL;
     }
 
-    if(q->mutex){
+    if (q->mutex) {
         SDL_DestroyMutex(q->mutex);
         q->mutex = NULL;
     }
 
-    if(q->slots){
-        for(int i = 0; i < q->capacity; ++i){
-            frame_packet_free(&q->slots[i]);
-        }
-        free(q->slots);
-        q->slots = NULL;
-    }
-
-    q->capacity = 0;
-    q->size = 0;
-    q->read_index = 0;
-    q->write_index = 0;
-    q->dropped_frames = 0;
-    q->stop_request = 0;
+    frame_queue_free_slots(q);
+    frame_queue_reset_state(q);
 }
 
-int frame_queue_push(FrameQueue *q,const uint8_t *data,size_t bytes,int width,int height,int stride,uint32_t pixfmt,uint64_t frame_id,const CaptureMeta *meta){
+int frame_queue_push(FrameQueue *q,
+                     const uint8_t *data,
+                     size_t bytes,
+                     int width,
+                     int height,
+                     int stride,
+                     uint32_t pixfmt,
+                     uint64_t frame_id,
+                     const CaptureMeta *meta)
+{
     FramePacket *slot;
 
-    if(!q || !data || !meta || !q->mutex){
+    if (!q || !data || !meta || !q->mutex) {
         return -1;
     }
 
     SDL_LockMutex(q->mutex);
 
-    if(q->stop_request){
+    if (q->stop_request) {
         SDL_UnlockMutex(q->mutex);
         return 0;
     }
 
-    if(q->size == q->capacity){
+    if (q->size == q->capacity) {
         q->read_index = (q->read_index + 1) % q->capacity;
         q->size--;
         q->dropped_frames++;
     }
 
     slot = &q->slots[q->write_index];
-
-    if(bytes > slot->capacity){
+    if (!slot->data) {
         SDL_UnlockMutex(q->mutex);
         return -1;
     }
 
-    memcpy(slot->data,data,bytes);
+    if (bytes > slot->capacity) {
+        SDL_UnlockMutex(q->mutex);
+        return -1;
+    }
+
+    memcpy(slot->data, data, bytes);
     slot->bytes = bytes;
     slot->width = width;
     slot->height = height;
@@ -179,47 +243,47 @@ int frame_queue_push(FrameQueue *q,const uint8_t *data,size_t bytes,int width,in
     return 0;
 }
 
-FrameQueuePopResult frame_queue_pop(FrameQueue *q,FramePacket *out,int timeout_ms){
+FrameQueuePopResult frame_queue_pop(FrameQueue *q, FramePacket *out, int timeout_ms)
+{
     int wait_ret;
     FramePacket *slot;
 
-    if(!q || !out || !out->data || !q->mutex){
+    if (!q || !out || !out->data || !q->mutex) {
         return FRAME_QUEUE_POP_ERROR;
     }
 
     SDL_LockMutex(q->mutex);
 
-    while(q->size == 0 && !q->stop_request){
-        if(timeout_ms < 0){
-            wait_ret = SDL_CondWait(q->not_empty,q->mutex);
-        }else{
-            wait_ret = SDL_CondWaitTimeout(q->not_empty,q->mutex,timeout_ms);
+    while (q->size == 0 && !q->stop_request) {
+        if (timeout_ms < 0) {
+            wait_ret = SDL_CondWait(q->not_empty, q->mutex);
+        } else {
+            wait_ret = SDL_CondWaitTimeout(q->not_empty, q->mutex, timeout_ms);
         }
 
-        if(wait_ret == SDL_MUTEX_TIMEDOUT){
+        if (wait_ret == SDL_MUTEX_TIMEDOUT) {
             SDL_UnlockMutex(q->mutex);
             return FRAME_QUEUE_POP_TIMEOUT;
         }
 
-        if(wait_ret != 0){
+        if (wait_ret != 0) {
             SDL_UnlockMutex(q->mutex);
             return FRAME_QUEUE_POP_ERROR;
         }
     }
 
-    if(q->size == 0 && q->stop_request){
+    if (q->size == 0 && q->stop_request) {
         SDL_UnlockMutex(q->mutex);
         return FRAME_QUEUE_POP_STOPPED;
     }
 
     slot = &q->slots[q->read_index];
-
-    if(slot->bytes > out->capacity){
+    if (!slot->data || slot->bytes > out->capacity) {
         SDL_UnlockMutex(q->mutex);
         return FRAME_QUEUE_POP_ERROR;
     }
 
-    memcpy(out->data,slot->data,slot->bytes);
+    memcpy(out->data, slot->data, slot->bytes);
     out->bytes = slot->bytes;
     out->frame_id = slot->frame_id;
     out->meta = slot->meta;
@@ -235,8 +299,9 @@ FrameQueuePopResult frame_queue_pop(FrameQueue *q,FramePacket *out,int timeout_m
     return FRAME_QUEUE_POP_OK;
 }
 
-void frame_queue_flush(FrameQueue *q){
-    if(!q || !q->mutex){
+void frame_queue_flush(FrameQueue *q)
+{
+    if (!q || !q->mutex) {
         return;
     }
 
@@ -246,5 +311,6 @@ void frame_queue_flush(FrameQueue *q){
     q->size = 0;
     q->read_index = q->write_index;
 
-    SDL_UnlockMutex(q->mutex);    
+    SDL_CondBroadcast(q->not_empty);
+    SDL_UnlockMutex(q->mutex);
 }
