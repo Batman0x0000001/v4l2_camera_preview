@@ -24,7 +24,7 @@ C_SRCS := \
 
 CPP_SRCS := \
 	webrtc/webrtc_bridge.cpp \
-	# webrtc/webrtc_publisher.cpp \
+	webrtc/webrtc_publisher.cpp \
 	# webrtc/webrtc_signaling.cpp
 
 C_OBJS   := $(C_SRCS:.c=.o)
@@ -75,10 +75,8 @@ PKGS            := sdl2 alsa libavcodec libavformat libavutil libswscale libswre
 PKG_CFLAGS      := $(shell $(PKG_CONFIG) --cflags $(PKGS))
 PKG_LDLIBS      := $(shell $(PKG_CONFIG) --libs $(PKGS))
 
-# 预留给未来 WebRTC C++ 库的扩展口。
-# 当前默认留空，不影响现有纯 C 版本编译。
-WEBRTC_CFLAGS   ?=
-WEBRTC_LDLIBS   ?=
+WEBRTC_CFLAGS   := -I/usr/local/include
+WEBRTC_LDLIBS   := -L/usr/local/lib -ldatachannel
 
 LDLIBS          := $(PKG_LDLIBS) $(WEBRTC_LDLIBS)
 

@@ -1,4 +1,5 @@
 #include"webrtc_bridge.h"
+#include"webrtc_publisher.hpp"
 
 #include<new>
 #include<cstdio>
@@ -7,78 +8,53 @@
 class WebRtcSenderImpl
 {
 private:
-    WebRtcSenderConfig config_;
-    WebRtcSenderCallbacks callbacks_;
-    WebRtcPeerState state_;
-    bool started_;
+    std::unique_ptr<WebRtcPublisher> m_Publisher;
 
-private:
-    void ChangeState(WebRtcPeerState new_state){
-        if(state_ == new_state){
-            return;
-        }
-
-        state_ = new_state;
-
-        if(callbacks_.on_state){
-            callbacks_.on_state(state_,callbacks_.userdata);
-        }
-    }
-
-    void Log(WebRtcBridgeLogLevel level,const char *message){
-        if(callbacks_.on_log){
-            callbacks_.on_log(level,message,callbacks_.userdata);
-        }
-    }
 public:
     WebRtcSenderImpl(const WebRtcSenderConfig& config,const WebRtcSenderCallbacks& callbacks)
-        :config_(config),
-        callbacks_(callbacks),
-        state_(WEBRTC_PEER_STATE_NEW),
-        started_(false)
-    {}
+        :m_Publisher(std::make_unique<WebRtcPublisher>(config,callbacks)){}
+/*
+等价于：
+    WebRtcPublisher *raw = new WebRtcPublisher(config, callbacks);  // 调用构造函数
+    std::unique_ptr<WebRtcPublisher> m_Publisher(raw);              // 包装成智能指针
+    raw = nullptr;  // 立即置空，防止误用
+但是make_unique 内部处理了异常安全，更好
+
+注意：
+    WebRtcPublisher *raw = new WebRtcPublisher(config, callbacks);
+    std::unique_ptr<WebRtcPublisher> m_Publisher = raw;
+不允许！因为构造函数是 explicit，不能隐式转换 
+*/
+
 
     int Start(){
-        Log(WEBRTC_LOG_INFO,"WebRTC bridge skeleton is ready, but publisher core is not implemented yet.");
-        return -1;
+        return m_Publisher ? m_Publisher->Start() : -1;
     }
 
     int SetRemoteDescription(const char *type, const char *sdp) {
-        (void)type;
-        (void)sdp;
-        Log(WEBRTC_LOG_WARN,
-            "SetRemoteDescription is not implemented in Part 3.");
-        return -1;
+        return m_Publisher ? m_Publisher->SetRemoteDescription(type,sdp) : -1;
     }
 
     int AddRemoteCandidate(const char *candidate, const char *mid) {
-        (void)candidate;
-        (void)mid;
-        Log(WEBRTC_LOG_WARN,
-            "AddRemoteCandidate is not implemented in Part 3.");
-        return -1;
+        return m_Publisher ? m_Publisher->AddRemoteCandidate(candidate,mid) : -1;
     }
 
     int SendVideo(const WebRtcEncodedVideoFrame *frame) {
-        (void)frame;
-        Log(WEBRTC_LOG_WARN,
-            "SendVideo is not implemented in Part 3.");
-        return -1;
+        return m_Publisher ? m_Publisher->SendVideo(frame) : -1;
     }
 
     void Stop() {
-        if (state_ != WEBRTC_PEER_STATE_CLOSED) {
-            ChangeState(WEBRTC_PEER_STATE_CLOSED);
+        if(m_Publisher){
+            m_Publisher->Stop();
         }
-        started_ = false;
     }
 
     WebRtcPeerState GetState() const {
-        return state_;
+        return m_Publisher ? m_Publisher->GetState() : WEBRTC_PEER_STATE_CLOSED;
     }
 
     int IsReady() const {
-        return started_ && state_ == WEBRTC_PEER_STATE_CONNECTED;
+        return m_Publisher ? m_Publisher->IsReady() : 0;
     }
 };
 
