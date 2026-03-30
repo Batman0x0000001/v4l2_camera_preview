@@ -220,7 +220,7 @@ int main(void)
      * 第三步：初始化各模块的“静态配置态”。
      * 这里只是填参数，不真正启动线程和设备。
      */
-    stream_state_init(&app, cfg.stream_url, cfg.fps);
+    stream_state_init(&app, cfg.stream_url, cfg.fps,cfg.stream_backend);
 
     record_state_init(&app, cfg.record_dir, cfg.fps);
 

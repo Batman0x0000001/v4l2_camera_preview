@@ -36,6 +36,14 @@
  * - 让 WebRTC 只依赖清晰的采集输出接口，而不是直接感知整个 AppState。
  */
 
+//opaque handle
+typedef struct WebRtcSender WebRtcSender;
+
+
+typedef enum StreamBackendType{
+    STREAM_BACKEND_RTSP = 0,
+    STREAM_BACKEND_WEBRTC = 1
+}StreamBackendType;
 
 //启动配置
 typedef struct AppConfig {
@@ -44,6 +52,7 @@ typedef struct AppConfig {
     int height;
     int fps;
 
+    StreamBackendType stream_backend;
     char stream_url[512];
 
     char record_dir[256];
@@ -110,9 +119,10 @@ typedef struct CameraControl {
     int def;
 } CameraControl;
 
-
-//RTSP 推流状态
+//推流状态
 typedef struct StreamState {
+    WebRtcSender *webrtc_sender;
+    StreamBackendType backend_type;
     char output_url[512];
 
     const AVCodec *encoder;

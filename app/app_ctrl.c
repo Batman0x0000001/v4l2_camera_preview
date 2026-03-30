@@ -139,7 +139,7 @@ void app_print_help(void)
     LOG_INFO("keyboard help:======================================");
     LOG_INFO("  esc            quit");
     LOG_INFO("  space          pause/resume capture processing");
-    LOG_INFO("  t              toggle RTSP streaming");
+    LOG_INFO("  t              toggle streaming");
     LOG_INFO("  r              toggle MP4 recording");
     LOG_INFO("  s              save snapshot");
     LOG_INFO("  up/down        select V4L2 control");

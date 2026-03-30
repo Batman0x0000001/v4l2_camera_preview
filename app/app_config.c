@@ -28,6 +28,17 @@ static const char *app_bool_text(int value)
     return value ? "on" : "off";
 }
 
+static const char *app_stream_backend_text(StreamBackendType type)
+{
+    switch (type) {
+    case STREAM_BACKEND_WEBRTC:
+        return "webrtc";
+    case STREAM_BACKEND_RTSP:
+    default:
+        return "rtsp";
+    }
+}
+
 void app_config_init_default(AppConfig *cfg)
 {
     if (!cfg) {
@@ -80,6 +91,10 @@ void app_config_init_default(AppConfig *cfg)
     cfg->audio_sample_rate = 48000;
     cfg->audio_channels = 2;
     cfg->audio_period_frames = 2048;
+
+
+    cfg->stream_backend = STREAM_BACKEND_RTSP;
+    app_copy_text(cfg->stream_url,sizeof(cfg->stream_url),"restp://127.0.0.1:8554/cam");
 }
 
 void app_print_banner(void)
@@ -110,11 +125,6 @@ void app_print_config(const AppConfig *cfg)
              cfg->height,
              cfg->fps);
 
-    LOG_INFO("  stream.url=%s", cfg->stream_url);
-    LOG_INFO("  stream.start_on=%d (%s)",
-             cfg->start_stream_on,
-             app_bool_text(stream_on_start));
-
     LOG_INFO("  record.dir=%s", cfg->record_dir);
     LOG_INFO("  record.start_record_on=%d", cfg->start_record_on);
     LOG_INFO("  record.auto_record_on_start=%d", cfg->auto_record_on_start);
@@ -128,4 +138,10 @@ void app_print_config(const AppConfig *cfg)
              cfg->audio_sample_rate,
              cfg->audio_channels,
              cfg->audio_period_frames);
+
+    LOG_INFO("  stream.backend=%s", app_stream_backend_text(cfg->stream_backend));
+    LOG_INFO("  stream.target=%s", cfg->stream_url);
+    LOG_INFO("  stream.start_on=%d (%s)",
+            cfg->start_stream_on,
+            app_bool_text(stream_on_start));
 }

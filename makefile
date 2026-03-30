@@ -1,10 +1,11 @@
 CC              := gcc
+CXX				:= g++
 TARGET          := v4l2_camera_preview
 
 PKG_CONFIG      ?= pkg-config
 PKGS            := sdl2 alsa libavcodec libavformat libavutil libswscale libswresample
 
-SRCS := \
+C_SRCS := \
 	main.c \
 	app/app_apply.c \
 	app/app_clock.c \
@@ -21,8 +22,15 @@ SRCS := \
 	utils/path_utils.c \
 	utils/time_utils.c
 
-OBJS := $(SRCS:.c=.o)
-DEPS := $(OBJS:.o=.d)
+CPP_SRCS := \
+	webrtc/webrtc_bridge.cpp \
+	# webrtc/webrtc_publisher.cpp \
+	# webrtc/webrtc_signaling.cpp
+
+C_OBJS   := $(C_SRCS:.c=.o)
+CPP_OBJS := $(CPP_SRCS:.cpp=.o)
+OBJS     := $(C_OBJS) $(CPP_OBJS)
+DEPS     := $(OBJS:.o=.d)
 
 INCLUDES := \
 	-I. \
@@ -32,33 +40,60 @@ INCLUDES := \
 	-Imedia \
 	-Ipipeline \
 	-Iui \
-	-Iutils
+	-Iutils \
+	-Iwebrtc
 
-WARNINGS := \
+COMMON_WARNINGS := \
 	-Wall \
 	-Wextra \
 	-Wshadow \
 	-Wformat=2 \
 	-Wundef \
-	-Wstrict-prototypes \
-	-Wmissing-prototypes \
 	-Wno-unused-parameter
 
-CSTD    := -std=c11
-OPT     := -O2 -g
-DEPFLAGS:= -MMD -MP
+C_WARNINGS := \
+	-Wstrict-prototypes \
+	-Wmissing-prototypes
 
-CFLAGS  := $(CSTD) $(OPT) $(WARNINGS) $(DEPFLAGS) $(INCLUDES)
-PKG_CFLAGS := $(shell $(PKG_CONFIG) --cflags $(PKGS))
-LDLIBS     := $(shell $(PKG_CONFIG) --libs $(PKGS))
+CXX_WARNINGS := \
+	# 先保持精简，后面 C++ 文件多了再按需要补充
+
+CSTD      := -std=c11
+CXXSTD    := -std=c++17
+OPT       := -O2 -g
+DEPFLAGS  := -MMD -MP
+
+CFLAGS    := $(CSTD) $(OPT) $(DEPFLAGS) $(INCLUDES) \
+             $(COMMON_WARNINGS) $(C_WARNINGS)
+
+CXXFLAGS  := $(CXXSTD) $(OPT) $(DEPFLAGS) $(INCLUDES) \
+             $(COMMON_WARNINGS) $(CXX_WARNINGS)
+
+PKG_CONFIG      ?= pkg-config
+PKGS            := sdl2 alsa libavcodec libavformat libavutil libswscale libswresample
+
+PKG_CFLAGS      := $(shell $(PKG_CONFIG) --cflags $(PKGS))
+PKG_LDLIBS      := $(shell $(PKG_CONFIG) --libs $(PKGS))
+
+# 预留给未来 WebRTC C++ 库的扩展口。
+# 当前默认留空，不影响现有纯 C 版本编译。
+WEBRTC_CFLAGS   ?=
+WEBRTC_LDLIBS   ?=
+
+LDLIBS          := $(PKG_LDLIBS) $(WEBRTC_LDLIBS)
 
 all: $(TARGET)
 
+LINKER := $(if $(strip $(CPP_OBJS)),$(CXX),$(CC))
+
 $(TARGET): $(OBJS)
-	$(CC) $(OBJS) -o $@ $(LDLIBS)
+	$(LINKER) $(OBJS) -o $@ $(LDLIBS)
 
 %.o: %.c
-	$(CC) $(CFLAGS) $(PKG_CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) $(PKG_CFLAGS) $(WEBRTC_CFLAGS) -c $< -o $@
+
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) $(PKG_CFLAGS) $(WEBRTC_CFLAGS) -c $< -o $@
 
 run: $(TARGET)
 	./$(TARGET)

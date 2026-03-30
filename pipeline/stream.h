@@ -14,7 +14,8 @@
  * stream.audio_queue 暂时由音频采集侧分发数据，但这里尚未消费音频。
  */
 
-void stream_state_init(AppState *app, const char *url, int fps);
+const char *stream_backend_name(StreamBackendType type);
+void stream_state_init(AppState *app, const char *url, int fps,StreamBackendType backend_type);
 int stream_init(AppState *app);
 void stream_close(AppState *app);
 

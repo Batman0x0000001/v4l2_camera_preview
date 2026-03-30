@@ -3,6 +3,85 @@
 
 #include "stream.h"
 #include "log.h"
+#include "webrtc_bridge.h"
+
+
+//加入WebRtc回调函数
+static void stream_webrtc_on_log(WebRtcBridgeLogLevel level,
+                                 const char *message,
+                                 void *userdata)
+{
+    (void)userdata;
+
+    switch (level) {
+    case WEBRTC_LOG_INFO:
+        LOG_INFO("webrtc: %s", message ? message : "");
+        break;
+    case WEBRTC_LOG_WARN:
+        LOG_WARN("webrtc: %s", message ? message : "");
+        break;
+    case WEBRTC_LOG_ERROR:
+    default:
+        LOG_ERROR("webrtc: %s", message ? message : "");
+        break;
+    }
+}
+
+static void stream_webrtc_on_state(WebRtcPeerState state, void *userdata)
+{
+    AppState *app = (AppState *)userdata;
+    (void)app;
+
+    LOG_INFO("webrtc state changed: %s", webrtc_peer_state_name(state));
+}
+
+static void stream_webrtc_on_local_description(const char *type,
+                                               const char *sdp,
+                                               void *userdata)
+{
+    AppState *app = (AppState *)userdata;
+    (void)app;
+
+    LOG_INFO("webrtc local description ready: type=%s", type ? type : "");
+    if (sdp && sdp[0] != '\0') {
+        LOG_INFO("webrtc local sdp:\n%s", sdp);
+    }
+}
+
+static void stream_webrtc_on_local_candidate(const char *candidate,
+                                             const char *mid,
+                                             void *userdata)
+{
+    AppState *app = (AppState *)userdata;
+    (void)app;
+
+    LOG_INFO("webrtc local candidate ready: mid=%s candidate=%s",
+             mid ? mid : "",
+             candidate ? candidate : "");
+}
+
+static StreamBackendType stream_normalize_backend(StreamBackendType backend_type)
+{
+    switch (backend_type) {
+    case STREAM_BACKEND_RTSP:
+    case STREAM_BACKEND_WEBRTC:
+        return backend_type;
+
+    default:
+        return STREAM_BACKEND_RTSP;
+    }
+}
+
+const char *stream_backend_name(StreamBackendType type)
+{
+    switch (stream_normalize_backend(type)) {
+    case STREAM_BACKEND_WEBRTC:
+        return "webrtc";
+    case STREAM_BACKEND_RTSP:
+    default:
+        return "rtsp";
+    }
+}
 
 static int64_t stream_timestamp_us_to_pts(uint64_t delta_us, AVRational time_base)
 {
@@ -63,13 +142,15 @@ static void stream_reset_runtime_state(AppState *app)
     app->stream.fatal_error = 0;
 }
 
-void stream_state_init(AppState *app, const char *url, int fps)
+void stream_state_init(AppState *app, const char *url, int fps,StreamBackendType backend_type)
 {
     if (!app) {
         return;
     }
 
     memset(&app->stream, 0, sizeof(app->stream));
+
+    app->stream.backend_type = stream_normalize_backend(backend_type);
 
     snprintf(app->stream.output_url,
              sizeof(app->stream.output_url),
@@ -193,7 +274,7 @@ static int stream_init_queue(AppState *app)
     return 0;
 }
 
-static int stream_init_output(AppState *app)
+static int stream_init_rtsp_output(AppState *app)
 {
     int ret;
     AVDictionary *opts = NULL;
@@ -241,7 +322,131 @@ static int stream_init_output(AppState *app)
     return 0;
 }
 
-static int stream_write_encoded_packets(AppState *app)
+static int stream_init_webrtc_output(AppState *app)
+{
+    WebRtcSenderConfig config;
+    WebRtcSenderCallbacks callbacks;
+    int ret;
+
+    if (!app) {
+        return -1;
+    }
+
+    webrtc_sender_config_init(&config);
+    webrtc_sender_callbacks_init(&callbacks);
+
+    snprintf(config.stream_name,
+             sizeof(config.stream_name),
+             "%s",
+             "camera");
+    snprintf(config.video_codec,
+             sizeof(config.video_codec),
+             "%s",
+             "H264");
+
+    config.width = app->width;
+    config.height = app->height;
+    config.fps = app->stream.fps;
+
+    callbacks.on_log = stream_webrtc_on_log;
+    callbacks.on_state = stream_webrtc_on_state;
+    callbacks.on_local_description = stream_webrtc_on_local_description;
+    callbacks.on_local_candidate = stream_webrtc_on_local_candidate;
+    callbacks.userdata = app;
+
+    ret = webrtc_sender_create(&app->stream.webrtc_sender,
+                               &config,
+                               &callbacks);
+    if (ret < 0) {
+        LOG_ERROR("webrtc_sender_create failed");
+        return -1;
+    }
+
+    ret = webrtc_sender_start(app->stream.webrtc_sender);
+    if (ret < 0) {
+        LOG_ERROR("webrtc_sender_start failed");
+        webrtc_sender_destroy(&app->stream.webrtc_sender);
+        return -1;
+    }
+
+    return 0;
+}
+
+static int stream_init_output(AppState *app)
+{
+    StreamBackendType backend_type;
+
+    if (!app) {
+        return -1;
+    }
+
+    backend_type = stream_normalize_backend(app->stream.backend_type);
+
+    switch (backend_type) {
+    case STREAM_BACKEND_RTSP:
+        return stream_init_rtsp_output(app);
+
+    case STREAM_BACKEND_WEBRTC:
+        return stream_init_webrtc_output(app);
+
+
+    default:
+        LOG_ERROR("unsupported stream backend type: %d", (int)backend_type);
+        return -1;
+    }
+}
+
+static int stream_write_webrtc_packets(AppState *app)
+{
+    int ret;
+
+    while (1) {
+        WebRtcEncodedVideoFrame frame;
+        int64_t pts_us;
+        int64_t dts_us;
+
+        ret = avcodec_receive_packet(app->stream.enc_ctx, app->stream.pkt);
+        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+            return 0;
+        }
+
+        if (ret < 0) {
+            LOG_ERROR("avcodec_receive_packet(webrtc) failed");
+            return -1;
+        }
+
+        pts_us = 0;
+        dts_us = 0;
+
+        if (app->stream.pkt->pts != AV_NOPTS_VALUE) {
+            pts_us = av_rescale_q(app->stream.pkt->pts,
+                                  app->stream.enc_ctx->time_base,
+                                  (AVRational){1, 1000000});
+        }
+
+        if (app->stream.pkt->dts != AV_NOPTS_VALUE) {
+            dts_us = av_rescale_q(app->stream.pkt->dts,
+                                  app->stream.enc_ctx->time_base,
+                                  (AVRational){1, 1000000});
+        }
+
+        frame.data = app->stream.pkt->data;
+        frame.size = (size_t)app->stream.pkt->size;
+        frame.pts_us = pts_us;
+        frame.dts_us = dts_us;
+        frame.is_keyframe = (app->stream.pkt->flags & AV_PKT_FLAG_KEY) ? 1 : 0;
+
+        ret = webrtc_sender_send_video(app->stream.webrtc_sender, &frame);
+        av_packet_unref(app->stream.pkt);
+
+        if (ret < 0) {
+            LOG_ERROR("webrtc_sender_send_video failed");
+            return -1;
+        }
+    }
+}
+
+static int stream_write_rtsp_packets(AppState *app)
 {
     int ret;
 
@@ -252,7 +457,7 @@ static int stream_write_encoded_packets(AppState *app)
         }
 
         if (ret < 0) {
-            LOG_ERROR("avcodec_receive_packet failed");
+            LOG_ERROR("avcodec_receive_packet(rtsp) failed");
             return -1;
         }
 
@@ -268,6 +473,30 @@ static int stream_write_encoded_packets(AppState *app)
             LOG_ERROR("av_interleaved_write_frame failed");
             return -1;
         }
+    }
+}
+
+static int stream_write_encoded_packets(AppState *app)
+{
+    StreamBackendType backend_type;
+
+    if (!app) {
+        return -1;
+    }
+
+    backend_type = stream_normalize_backend(app->stream.backend_type);
+
+    switch (backend_type) {
+    case STREAM_BACKEND_RTSP:
+        return stream_write_rtsp_packets(app);
+
+    case STREAM_BACKEND_WEBRTC:
+        return stream_write_webrtc_packets(app);
+
+    default:
+        LOG_ERROR("unsupported backend in stream_write_encoded_packets: %d",
+                  (int)backend_type);
+        return -1;
     }
 }
 
@@ -560,6 +789,11 @@ void stream_close(AppState *app)
     app->stream.video_st = NULL;
     app->stream.encoder = NULL;
     app->stream.enabled = 0;
+
+    if (app->stream.webrtc_sender) {
+        webrtc_sender_stop(app->stream.webrtc_sender);
+        webrtc_sender_destroy(&app->stream.webrtc_sender);
+    }
 
     stream_reset_runtime_state(app);
 }
