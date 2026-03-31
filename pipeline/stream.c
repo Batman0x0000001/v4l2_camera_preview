@@ -1,10 +1,207 @@
 #include <stdio.h>
 #include <string.h>
+#include<sys/stat.h>
+#include<errno.h>
 
 #include "stream.h"
 #include "log.h"
 #include "webrtc_bridge.h"
 
+
+static int stream_webrtc_ensure_signal_dir(AppState *app){
+    if(!app || app->stream.webrtc_signal_dir[0] == '\0'){
+        return -1;
+    }
+
+    if(mkdir(app->stream.webrtc_signal_dir,0755) == 0){
+        return 0;
+    }
+
+    if (errno == EEXIST) {
+        return 0;
+    }
+
+    LOG_ERROR("mkdir(%s) failed: %s",
+              app->stream.webrtc_signal_dir,
+              strerror(errno));
+    return -1;
+}
+
+static int stream_webrtc_write_text_file(const char *path,const char *text){
+    FILE *fp;
+
+    if(!path || !text){
+        return -1;
+    }
+
+    fp = fopen(path,"wb");
+    if (!fp) {
+        LOG_ERROR("fopen(%s, wb) failed: %s", path, strerror(errno));
+        return -1;
+    }
+
+    if (fwrite(text, 1, strlen(text), fp) != strlen(text)) {
+        LOG_ERROR("fwrite(%s) failed", path);
+        fclose(fp);
+        return -1;
+    }
+
+    fclose(fp);
+    return 0;
+}
+
+static char *stream_webrtc_read_text_file(const char *path)
+{
+    FILE *fp;
+    long size;
+    char *buf;
+
+    if (!path) {
+        return NULL;
+    }
+
+    fp = fopen(path, "rb");
+    if (!fp) {
+        return NULL;
+    }
+
+    //int fseek(FILE *stream, long offset, int whence);
+    //                  文件指针  偏移量/字节数   从哪个位置开始偏移
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        return NULL;
+    }
+
+    size = ftell(fp);
+    if (size < 0) {
+        fclose(fp);
+        return NULL;
+    }
+
+    if (fseek(fp, 0, SEEK_SET) != 0) {
+        fclose(fp);
+        return NULL;
+    }
+
+    buf = (char *)malloc((size_t)size + 1);
+    if (!buf) {
+        fclose(fp);
+        return NULL;
+    }
+
+    if (size > 0 && fread(buf, 1, (size_t)size, fp) != (size_t)size) {
+        free(buf);
+        fclose(fp);
+        return NULL;
+    }
+
+    buf[size] = '\0';
+    fclose(fp);
+    return buf;
+}
+
+static int stream_webrtc_parse_candidate_file(const char *text,
+                                              char *mid,
+                                              size_t mid_size,
+                                              char *candidate,
+                                              size_t candidate_size)
+{
+    const char *line_end;
+    const char *body;
+
+    if (!text || !mid || !candidate || mid_size == 0 || candidate_size == 0) {
+        return -1;
+    }
+
+    mid[0] = '\0';
+    candidate[0] = '\0';
+
+    if (strncmp(text, "mid=", 4) == 0) {// 有 mid 行
+        line_end = strchr(text, '\n'); // 找到第一行的结尾
+        if (!line_end) {
+            return -1;
+        }
+        // 提取 "mid=" 之后到换行符之前的内容
+        snprintf(mid, mid_size, "%.*s", (int)(line_end - (text + 4)), text + 4);
+        body = line_end + 1;// body 指向第二行，即 candidate 内容
+    } else {
+        body = text;// 没有 mid 行，整个文本都是 candidate
+    }
+
+    while (*body == '\r' || *body == '\n') {
+        ++body;
+    }
+
+    snprintf(candidate, candidate_size, "%s", body);
+
+    while (candidate[0] != '\0') {
+        size_t len = strlen(candidate);
+        if (len == 0) {
+            break;
+        }
+
+        if (candidate[len - 1] == '\r' || candidate[len - 1] == '\n') {
+            candidate[len - 1] = '\0';
+            continue;
+        }
+
+        break;
+    }
+
+    return candidate[0] != '\0' ? 0 : -1;
+}
+
+int stream_webrtc_load_next_remote_candidate_file(AppState *app)
+{
+    char path[512];
+    char *text;
+    char mid[128];
+    char candidate[2048];
+    unsigned int index;
+    int ret;
+
+    if (!app || !app->stream.webrtc_sender) {
+        return -1;
+    }
+
+    index = app->stream.webrtc_remote_candidate_index;
+
+    snprintf(path,
+             sizeof(path),
+             "%s/browser_candidate_%06u.txt",
+             app->stream.webrtc_signal_dir,
+             index);
+
+    text = stream_webrtc_read_text_file(path);
+    if (!text) {
+        LOG_WARN("webrtc candidate file not found: %s", path);
+        return 1;
+    }
+
+    if (stream_webrtc_parse_candidate_file(text,
+                                           mid,
+                                           sizeof(mid),
+                                           candidate,
+                                           sizeof(candidate)) < 0) {
+        free(text);
+        LOG_ERROR("failed to parse webrtc candidate file: %s", path);
+        return -1;
+    }
+
+    ret = webrtc_sender_add_remote_candidate(app->stream.webrtc_sender,
+                                             candidate,
+                                             mid[0] ? mid : NULL);
+    free(text);
+
+    if (ret < 0) {
+        LOG_ERROR("webrtc_sender_add_remote_candidate failed for %s", path);
+        return -1;
+    }
+
+    app->stream.webrtc_remote_candidate_index++;
+    LOG_INFO("webrtc remote candidate loaded from %s", path);
+    return 0;
+}
 
 //加入WebRtc回调函数
 static void stream_webrtc_on_log(WebRtcBridgeLogLevel level,
@@ -40,11 +237,25 @@ static void stream_webrtc_on_local_description(const char *type,
                                                void *userdata)
 {
     AppState *app = (AppState *)userdata;
-    (void)app;
+    char path[512];
+
+    if(!app){
+        return;
+    }
 
     LOG_INFO("webrtc local description ready: type=%s", type ? type : "");
     if (sdp && sdp[0] != '\0') {
         LOG_INFO("webrtc local sdp:\n%s", sdp);
+    }
+
+    if (stream_webrtc_ensure_signal_dir(app) < 0) {
+        return;
+    }
+
+    snprintf(path, sizeof(path), "%s/native_offer.sdp", app->stream.webrtc_signal_dir);
+
+    if (stream_webrtc_write_text_file(path, sdp ? sdp : "") == 0) {
+        LOG_INFO("webrtc offer written to %s", path);
     }
 }
 
@@ -53,11 +264,69 @@ static void stream_webrtc_on_local_candidate(const char *candidate,
                                              void *userdata)
 {
     AppState *app = (AppState *)userdata;
-    (void)app;
+    char path[512];
+    char body[2048];
+    unsigned int index;
+    
+    if(!app){
+        return;
+    }
 
     LOG_INFO("webrtc local candidate ready: mid=%s candidate=%s",
              mid ? mid : "",
              candidate ? candidate : "");
+
+    if(stream_webrtc_ensure_signal_dir(app) < 0){
+        return;
+    }
+
+    index = app->stream.webrtc_local_candidate_index++;
+
+    snprintf(path,
+             sizeof(path),
+             "%s/native_candidate_%06u.txt",
+             app->stream.webrtc_signal_dir,
+             index);
+
+    snprintf(body,
+             sizeof(body),
+             "mid=%s\n%s\n",
+             mid ? mid : "",
+             candidate ? candidate : "");
+
+    if (stream_webrtc_write_text_file(path, body) == 0) {
+        LOG_INFO("webrtc local candidate written to %s", path);
+    }    
+}
+
+int stream_webrtc_load_remote_answer_file(AppState *app){
+    char path[512];
+    char *sdp;
+    int ret;
+
+    if(!app || !app->stream.webrtc_sender){
+        return -1;
+    }
+
+    snprintf(path,sizeof(path),"%s/browser_answer.sdp",app->stream.webrtc_signal_dir);
+
+    sdp = stream_webrtc_read_text_file(path);
+    if (!sdp) {
+        LOG_WARN("webrtc answer file not found: %s", path);
+        return 1;
+    }
+
+    ret = webrtc_sender_set_remote_description(app->stream.webrtc_sender,"answer",sdp);
+
+    free(sdp);
+
+    if (ret < 0) {
+        LOG_ERROR("webrtc_sender_set_remote_description(answer) failed");
+        return -1;
+    }
+
+    LOG_INFO("webrtc remote answer loaded from %s", path);
+    return 0;
 }
 
 static StreamBackendType stream_normalize_backend(StreamBackendType backend_type)
@@ -156,6 +425,14 @@ void stream_state_init(AppState *app, const char *url, int fps,StreamBackendType
              sizeof(app->stream.output_url),
              "%s",
              url ? url : "");
+
+    snprintf(app->stream.webrtc_signal_dir,
+             sizeof(app->stream.webrtc_signal_dir),
+             "%s",
+             "./webrtc_manual");
+
+    app->stream.webrtc_local_candidate_index = 1;
+    app->stream.webrtc_remote_candidate_index = 1;
 
     app->stream.fps = (fps > 0) ? fps : 30;
     app->stream.enabled = 0;

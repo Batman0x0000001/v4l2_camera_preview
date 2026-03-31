@@ -99,6 +99,7 @@ run: $(TARGET)
 clean:
 	rm -f $(OBJS) $(DEPS) $(TARGET)
 	rm -rf recordings snapshots
+	rm -rf webrtc_manual
 
 .PHONY: all run clean
 

@@ -93,7 +93,7 @@ void app_config_init_default(AppConfig *cfg)
     cfg->audio_period_frames = 2048;
 
 
-    cfg->stream_backend = STREAM_BACKEND_RTSP;
+    cfg->stream_backend = STREAM_BACKEND_WEBRTC;
     app_copy_text(cfg->stream_url,sizeof(cfg->stream_url),"restp://127.0.0.1:8554/cam");
 }
 

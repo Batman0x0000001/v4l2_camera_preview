@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>PushStream Manual WebRTC Receiver</title>
+  <style>
+    body { font-family: sans-serif; margin: 16px; }
+    textarea { width: 100%; min-height: 140px; margin: 8px 0; }
+    button { margin-right: 8px; margin-bottom: 8px; }
+    video { width: 720px; max-width: 100%; background: #000; display: block; margin-top: 12px; }
+    pre { background: #f5f5f5; padding: 12px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>PushStream Manual WebRTC Receiver</h1>
+
+  <div>
+    <button id="btnCreate">1. Create PeerConnection</button>
+    <button id="btnApplyOffer">2. Apply Offer + Create Answer</button>
+    <button id="btnAddNativeCandidate">3. Add Native Candidate</button>
+  </div>
+
+  <label>Native offer SDP (paste native_offer.sdp here)</label>
+  <textarea id="offerInput"></textarea>
+
+  <label>Native candidate block (paste one native_candidate_xxxxxx.txt here)</label>
+  <textarea id="nativeCandidateInput"></textarea>
+
+  <label>Browser answer SDP (save as browser_answer.sdp)</label>
+  <textarea id="answerOutput" readonly></textarea>
+
+  <label>Browser local candidate blocks (save each block as browser_candidate_xxxxxx.txt)</label>
+  <textarea id="browserCandidatesOutput" readonly></textarea>
+
+  <pre id="log"></pre>
+  <video id="remoteVideo" autoplay playsinline controls muted></video>
+
+  <script>
+    let pc = null;
+    let browserCandidateIndex = 1;
+
+    const btnCreate = document.getElementById('btnCreate');
+    const btnApplyOffer = document.getElementById('btnApplyOffer');
+    const btnAddNativeCandidate = document.getElementById('btnAddNativeCandidate');
+
+    const offerInput = document.getElementById('offerInput');
+    const nativeCandidateInput = document.getElementById('nativeCandidateInput');
+    const answerOutput = document.getElementById('answerOutput');
+    const browserCandidatesOutput = document.getElementById('browserCandidatesOutput');
+    const remoteVideo = document.getElementById('remoteVideo');
+    const logView = document.getElementById('log');
+
+    function log(message) {
+      logView.textContent += message + '\n';
+    }
+
+    function ensurePeerConnection() {
+      if (pc) {
+        return pc;
+      }
+
+      pc = new RTCPeerConnection({
+        iceServers: [
+          { urls: ['stun:stun.l.google.com:19302'] }
+        ]
+      });
+
+      pc.onconnectionstatechange = () => {
+        log('connectionState=' + pc.connectionState);
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        log('iceConnectionState=' + pc.iceConnectionState);
+      };
+
+      pc.onicegatheringstatechange = () => {
+        log('iceGatheringState=' + pc.iceGatheringState);
+      };
+
+      pc.ontrack = (event) => {
+        log('remote track received: kind=' + event.track.kind);
+
+        if (event.streams && event.streams.length > 0) {
+          remoteVideo.srcObject = event.streams[0];
+        } else {
+          const ms = new MediaStream([event.track]);
+          remoteVideo.srcObject = ms;
+        }
+      };
+
+      pc.onicecandidate = (event) => {
+        if (!event.candidate) {
+          log('browser ICE gathering complete');
+          return;
+        }
+
+        const block =
+          '=== browser_candidate_' +
+          String(browserCandidateIndex).padStart(6, '0') +
+          '.txt ===\n' +
+          'mid=' + (event.candidate.sdpMid || '') + '\n' +
+          event.candidate.candidate + '\n\n';
+
+        browserCandidatesOutput.value += block;
+        browserCandidateIndex += 1;
+
+        log('browser local candidate generated');
+      };
+
+      log('PeerConnection created');
+      return pc;
+    }
+
+    function normalizeSdpForWebRTC(text) {
+      if (!text) {
+        return '';
+      }
+
+      // 先统一成 LF，再转换回 SDP 期望的 CRLF
+      let sdp = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+      // 去掉首尾多余空白，避免粘贴时带进无关空行
+      sdp = sdp.trim();
+
+      // SDP 重新拼成 CRLF，并补一个结尾 CRLF
+      sdp = sdp.split('\n').join('\r\n') + '\r\n';
+
+      return sdp;
+    }
+
+    async function applyOfferAndCreateAnswer() {
+      const localPc = ensurePeerConnection();
+      const offerSdp =  normalizeSdpForWebRTC(offerInput.value);
+
+      if (!offerSdp) {
+        log('offer is empty');
+        return;
+      }
+
+      log('normalized offer length=' + offerSdp.length);
+      console.log('normalized offer:', JSON.stringify(offerSdp));
+
+    // log('offer length: ' + offerSdp.length);
+    // log('offer:\n' + offerSdp);
+
+      await localPc.setRemoteDescription({
+        type: 'offer',
+        sdp: offerSdp
+      });
+      log('remote offer applied');
+
+      const answer = await localPc.createAnswer();
+      await localPc.setLocalDescription(answer);
+
+      answerOutput.value = normalizeSdpForWebRTC(
+        localPc.localDescription ? localPc.localDescription.sdp : answer.sdp
+      );
+      log('browser answer created');
+    }
+
+    function parseCandidateBlock(text) {
+      const trimmed = text.trim();
+      if (!trimmed) {
+        return null;
+      }
+
+      const lines = trimmed.split(/\r?\n/);
+      let mid = '';
+      let candidate = '';
+
+      if (lines[0].startsWith('mid=')) {
+        mid = lines[0].slice(4).trim();
+        candidate = lines.slice(1).join('\n').trim();
+      } else {
+        candidate = trimmed;
+      }
+
+      if (!candidate) {
+        return null;
+      }
+
+      return { mid, candidate };
+    }
+
+    async function addNativeCandidate() {
+      const localPc = ensurePeerConnection();
+      const parsed = parseCandidateBlock(nativeCandidateInput.value);
+
+      if (!parsed) {
+        log('native candidate block is empty or invalid');
+        return;
+      }
+
+      await localPc.addIceCandidate({
+        candidate: parsed.candidate,
+        sdpMid: parsed.mid || null
+      });
+
+      log('native candidate added to browser');
+    }
+
+    btnCreate.addEventListener('click', () => {
+      ensurePeerConnection();
+    });
+
+    btnApplyOffer.addEventListener('click', async () => {
+      try {
+        await applyOfferAndCreateAnswer();
+      } catch (err) {
+        log('apply offer/create answer failed: ' + err);
+        console.error(err);
+      }
+    });
+
+    btnAddNativeCandidate.addEventListener('click', async () => {
+      try {
+        await addNativeCandidate();
+      } catch (err) {
+        log('add native candidate failed: ' + err);
+        console.error(err);
+      }
+    });
+  </script>
+</body>
+</html>

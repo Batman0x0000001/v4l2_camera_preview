@@ -125,6 +125,11 @@ typedef struct StreamState {
     StreamBackendType backend_type;
     char output_url[512];
 
+    //手工信令邮箱
+    char webrtc_signal_dir[256];
+    uint32_t webrtc_local_candidate_index;
+    uint32_t webrtc_remote_candidate_index;
+
     const AVCodec *encoder;
     AVCodecContext *enc_ctx;
     AVFormatContext *ofmt_ctx;

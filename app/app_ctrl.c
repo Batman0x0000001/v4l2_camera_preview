@@ -146,6 +146,8 @@ void app_print_help(void)
     LOG_INFO("  left/right     adjust current control");
     LOG_INFO("  h              print help");
     LOG_INFO("  i              print runtime state");
+    LOG_INFO("  y              load WebRTC answer file");
+    LOG_INFO("  u              load next WebRTC candidate file");
 }
 
 void app_print_runtime_state(const AppState *app)

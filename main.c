@@ -112,6 +112,30 @@ static void app_handle_keydown(AppState *app, const AppConfig *cfg, SDL_Keycode 
         app->quit = 1;
         break;
 
+    case SDLK_y: {
+        int ret = stream_webrtc_load_remote_answer_file(app);
+        if (ret == 0) {
+            LOG_INFO("loaded browser answer successfully");
+        } else if (ret > 0) {
+            LOG_WARN("browser answer file is not ready yet");
+        } else {
+            LOG_ERROR("failed to load browser answer file");
+        }
+        break;
+    }
+
+    case SDLK_u: {
+        int ret = stream_webrtc_load_next_remote_candidate_file(app);
+        if (ret == 0) {
+            LOG_INFO("loaded next browser candidate successfully");
+        } else if (ret > 0) {
+            LOG_WARN("next browser candidate file is not ready yet");
+        } else {
+            LOG_ERROR("failed to load next browser candidate file");
+        }
+        break;
+    }
+
     default:
         break;
     }

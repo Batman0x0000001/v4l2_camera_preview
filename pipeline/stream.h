@@ -19,4 +19,7 @@ void stream_state_init(AppState *app, const char *url, int fps,StreamBackendType
 int stream_init(AppState *app);
 void stream_close(AppState *app);
 
+int stream_webrtc_load_remote_answer_file(AppState *app);
+int stream_webrtc_load_next_remote_candidate_file(AppState *app);
+
 #endif
