@@ -11,6 +11,10 @@ namespace rtc{
     class Track;
     class Description;
     class Candidate;
+    class RtpPacketizationConfig;
+    class H264RtpPacketizer;
+    class RtcpSrReporter;
+    class RtcpNackResponder;
 }
 
 class WebRtcPublisher
@@ -20,17 +24,41 @@ private://data
     WebRtcSenderCallbacks m_Callbacks{};
 
     std::shared_ptr<rtc::PeerConnection> m_PeerConnection;
-    std::shared_ptr<rtc::Track> m_VideoTrack;
+    std::shared_ptr<rtc::Track> m_VideoTrack;//表示“PeerConnection 上那条视频轨道”
+
+    //维护 RTP 发送所需的配置，比如 SSRC、payload type、clock rate
+    std::shared_ptr<rtc::RtpPacketizationConfig> m_VideoRtpConfig;
+
+    //H264 打包器：把一帧 H264 样本拆成 WebRTC/UDP 真正要发的 RTP 包
+    std::shared_ptr<rtc::H264RtpPacketizer> m_VideoPacketizer;
+
+    //SR 报告器：定期发送 RTCP Sender Report，用于音视频同步
+    std::shared_ptr<rtc::RtcpSrReporter> m_VideoSrReporter;
+
+    // NACK 响应器：处理对端请求重传丢失的包
+    std::shared_ptr<rtc::RtcpNackResponder> m_VideoNackResponder;
+
+    // 同步源标识符，唯一标识这路流
+    uint32_t m_VideoSsrc = 1;
+
+    std::string m_VideoMid = "video";
+
+    // 流的名称
+    std::string m_VideoCname = "pushstream-video";
+    std::string m_VideoMsid = "pushstream-stream";
+
 
     WebRtcPeerState m_State = WEBRTC_PEER_STATE_NEW;
     bool m_Started = false;
-    bool m_HasWarnedAboutVideoStub = false;
+    bool m_VideoTrackOpen = false;
+    bool m_HasWarnedTrackNotOpen = false;
 
 private://method
     int CreatePeerConnection();
     void BindPeerCallbacks();
     int AddVideoTrack();
     int StartLocalOffer();
+    int ConfigureVideoSender(const WebRtcEncodedVideoFrame* frame);
 
     void ChangeState(WebRtcPeerState newState);
     void EmitLog(WebRtcBridgeLogLevel level,const std::string& message) const;

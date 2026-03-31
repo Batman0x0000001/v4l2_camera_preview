@@ -33,6 +33,50 @@ WebRtcPeerState ToBridgeState(rtc::PeerConnection::State state){
         return WEBRTC_PEER_STATE_CLOSED;
     }
 }
+
+rtc::Description::Type ParseDescriptionType(const std::string& type){
+    if(type == "offer")
+        return rtc::Description::Type::Offer;
+    if(type == "answer")
+        return rtc::Description::Type::Answer;
+    if(type == "pranswer")
+        return rtc::Description::Type::Pranswer;
+    if(type == "rollback")
+        return rtc::Description::Type::Rollback;
+
+    return rtc::Description::Type::Unspec;
+}
+
+rtc::NalUnit::Separator DetectNalSeparator(const uint8_t* data,size_t size){
+    if(data && size >=4 && 
+        data[0] == 0x00 && data[1] == 0x00 && 
+        data[2] == 0x00 && data[3] == 0x01){
+        return rtc::NalUnit::Separator::LongStartSequence;
+    }
+
+    if(data && size >=3 && 
+        data[0] == 0x00 && data[1] == 0x00 && 
+        data[2] == 0x01){
+        return rtc::NalUnit::Separator::ShortStartSequence;
+    }
+
+    return rtc::NalUnit::Separator::Length;
+}
+
+const char* NalSeparatorName(rtc::NalUnit::Separator separator){
+    switch(separator){
+        case rtc::NalUnit::Separator::Length:
+            return "Length";
+        case rtc::NalUnit::Separator::LongStartSequence:
+            return "LongStartSequence";
+        case rtc::NalUnit::Separator::ShortStartSequence:
+            return "ShortStartSequence";
+        case rtc::NalUnit::Separator::StartSequence:
+            return "StartSequence";
+        default:
+            return "unknown";
+    }
+}
 }//结束匿名空间
 
 WebRtcPublisher::WebRtcPublisher(const WebRtcSenderConfig& config,const WebRtcSenderCallbacks& callbacks)
@@ -134,12 +178,6 @@ void WebRtcPublisher::BindPeerCallbacks(){
     });
 
     /*
-        enum class GatheringState {
-            New,
-            InProgress,
-            Complete
-        };
-
         std::ostringstream
         字符串流，用于拼接字符串，类似于 C 的 snprintf：
 
@@ -147,6 +185,19 @@ void WebRtcPublisher::BindPeerCallbacks(){
         oss << "gathering state changed:" << state;  // 把文字和 state 拼在一起
         oss.str();  // 取出拼接结果，返回 std::string
     */
+
+    m_PeerConnection->onIceStateChange([this](rtc::PeerConnection::IceState state){
+        std::ostringstream oss;
+        oss << "ice state changed:" << state;
+        EmitLog(WEBRTC_LOG_INFO,oss.str());
+    });
+
+    m_PeerConnection->onSignalingStateChange([this](rtc::PeerConnection::SignalingState state){
+        std::ostringstream oss;
+        oss << "signaling state changed:" << state;
+        EmitLog(WEBRTC_LOG_INFO,oss.str());
+    });
+
     m_PeerConnection->onGatheringStateChange([this](rtc::PeerConnection::GatheringState state){
         std::ostringstream oss;
         oss << "gathering state changed:" << state;
@@ -198,20 +249,20 @@ int WebRtcPublisher::AddVideoTrack(){
     const int payloadType = m_Config.payload_type > 0 ? m_Config.payload_type : 96;
 
     try{
-        const std::string mid = "video";// 媒体流标识符
-        const std::string cname = "pushstream-video";// RTP 同步源名称
-        const std::string msid = "pushstream-stream";// 媒体流 ID
-        const uint32_t ssrc = 1;// 同步源标识符，唯一标识一路 RTP 流
-
-        rtc::Description::Video video(mid,rtc::Description::Direction::SendOnly);
+        rtc::Description::Video video(m_VideoMid,rtc::Description::Direction::SendOnly);
         video.addH264Codec(payloadType);
-        video.addSSRC(ssrc,cname,msid,mid);
+        video.addSSRC(m_VideoSsrc,m_VideoCname,m_VideoMsid,m_VideoMid);
 
         m_VideoTrack = m_PeerConnection->addTrack(video);
         if(!m_VideoTrack){
             EmitLog(WEBRTC_LOG_ERROR,"addTrack returned null");
             return -1;
         }
+
+        m_VideoTrack->onOpen([this](){
+            m_VideoTrackOpen = true;
+            EmitLog(WEBRTC_LOG_INFO,"video track opened");
+        });
 
         EmitLog(WEBRTC_LOG_INFO,"video track added");
         return 0;
@@ -258,6 +309,77 @@ int WebRtcPublisher::StartLocalOffer(){
     }
 }
 
+int WebRtcPublisher::ConfigureVideoSender(const WebRtcEncodedVideoFrame* frame){
+    if(!m_VideoTrack){
+        EmitLog(WEBRTC_LOG_ERROR,"video track is null");
+        return -1;
+    }
+
+    if(m_VideoPacketizer){
+        return 0;
+    }
+
+    if(!frame || !frame->data || frame->size == 0){
+        EmitLog(WEBRTC_LOG_ERROR,"invalid encoded video frame for packetizer setup");
+        return -1;
+    }
+
+    const int payloadType = m_Config.payload_type > 0 ? m_Config.payload_type : 96;
+    
+    //检测 NAL 分隔符，需要知道输入是哪种格式才能正确打包，所以用第一帧数据检测。
+    const auto separator = DetectNalSeparator(frame->data,frame->size);
+
+    try
+    {
+        m_VideoRtpConfig = std::make_shared<rtc::RtpPacketizationConfig>(
+            m_VideoSsrc,
+            m_VideoCname,
+            static_cast<uint8_t>(payloadType),
+            rtc::H264RtpPacketizer::ClockRate
+        );
+
+        /*
+        H264 帧
+            ↓
+        H264RtpPacketizer  → 切割成 RTP 包发送
+            ↓
+        RtcpSrReporter     → 定期发送同步报告
+            ↓
+        RtcpNackResponder  → 响应重传请求
+        */
+
+        m_VideoPacketizer = std::make_shared<rtc::H264RtpPacketizer>(
+            separator,
+            m_VideoRtpConfig
+        );
+
+        m_VideoSrReporter = std::make_shared<rtc::RtcpSrReporter>(m_VideoRtpConfig);
+        m_VideoPacketizer->addToChain(m_VideoSrReporter);
+
+        m_VideoNackResponder = std::make_shared<rtc::RtcpNackResponder>();
+        m_VideoPacketizer->addToChain(m_VideoNackResponder);
+
+        //把整条处理链挂到视频轨道上
+        m_VideoTrack->setMediaHandler(m_VideoPacketizer);
+
+        EmitLog(WEBRTC_LOG_INFO,std::string("configured H264 packetizer:separator=")+NalSeparatorName(separator));
+
+        return 0;
+
+    }
+    catch(const std::exception& e)
+    {
+        EmitLog(WEBRTC_LOG_ERROR,std::string("failed to configure video sender")+e.what());
+        return -1;
+    }
+    catch(...)
+    {
+        EmitLog(WEBRTC_LOG_ERROR,std::string("failed to configure video sender"));
+        return -1;
+    }
+    
+}
+
 int WebRtcPublisher::Start(){
     if(m_Started){
         return 0;
@@ -282,34 +404,153 @@ int WebRtcPublisher::Start(){
 }
 
 int WebRtcPublisher::SendVideo(const WebRtcEncodedVideoFrame* frame){
-    //转换成 void 类型后值直接丢弃，不产生任何代码
-    (void)frame;
-
-    if(!m_HasWarnedAboutVideoStub){
-        EmitLog(WEBRTC_LOG_WARN,"video send path is not implemented in Part 4 yet, dropping encoded frames");
-        m_HasWarnedAboutVideoStub = true;
+    if(!m_VideoTrack){
+        EmitLog(WEBRTC_LOG_ERROR,"video track is null");
+        return -1;
     }
 
-    return 0;
+    if(!frame || !frame->data || frame->size == 0){
+        EmitLog(WEBRTC_LOG_ERROR,"invalid encoded video frame");
+        return -1;
+    }
+
+    if(!m_VideoTrackOpen || !m_VideoTrack->isOpen()){
+        if(!m_HasWarnedTrackNotOpen){
+            EmitLog(WEBRTC_LOG_WARN,"video track is not open yet, dropping encoded frames");
+            m_HasWarnedTrackNotOpen = true;
+        }
+        return 0;
+    }
+
+    if(ConfigureVideoSender(frame) < 0){
+        return -1;
+    }
+
+    const int64_t ptsUs = frame->pts_us >= 0 ? frame->pts_us : 0;
+
+    try
+    {
+        m_VideoTrack->sendFrame(
+            reinterpret_cast<const rtc::byte*>(frame->data),
+            frame->size,
+            std::chrono::duration<double,std::micro>(static_cast<double>(ptsUs))
+        );
+
+        return 0;
+    }
+    catch(const std::exception& e)
+    {
+        EmitLog(WEBRTC_LOG_ERROR,std::string("failed to send video frame: ")+ e.what());
+        return -1;
+    }
+    catch(...){
+        EmitLog(WEBRTC_LOG_ERROR,"failed to send video frame");
+        return -1;
+    }
+    
 }
 
 
 int WebRtcPublisher::SetRemoteDescription(const char* type,const char* sdp){
-    (void)type;
-    (void)sdp;
+    if(!m_PeerConnection){
+        EmitLog(WEBRTC_LOG_ERROR,"peer connection is null");
+        return -1;
+    }
 
-    EmitLog(WEBRTC_LOG_WARN,"SetRemoteDescription is not implemented in Part 4 yet");
-    return -1;
+    const std::string sdpText = CopyCString(sdp);
+    if(sdpText.empty()){
+        EmitLog(WEBRTC_LOG_ERROR,"remote description is empty");
+        return -1;
+    }
+
+    const std::string typeText = CopyCString(type);
+    rtc::Description::Type desctiptionType = rtc::Description::Type::Unspec;
+
+    if(!typeText.empty()){
+        desctiptionType = ParseDescriptionType(typeText);
+        if(desctiptionType == rtc::Description::Type::Unspec){
+            EmitLog(WEBRTC_LOG_ERROR,std::string("unsupported remote description type:")+typeText);
+            return -1;
+        }
+    }
+
+    try{
+        rtc::Description remoteDescription(sdpText,desctiptionType);
+        m_PeerConnection->setRemoteDescription(remoteDescription);
+
+        std::string effectiveType = typeText;
+        if(effectiveType.empty()){
+            effectiveType = remoteDescription.typeString();
+        }
+
+        EmitLog(WEBRTC_LOG_ERROR,std::string("remote description applied: type=")+effectiveType);
+
+        if(remoteDescription.type() == rtc::Description::Type::Offer){
+            EmitLog(WEBRTC_LOG_WARN,"remote offer applied while auto negotiation is disabled;");
+        }
+
+        return 0;
+    }catch(const std::exception& e){
+        EmitLog(WEBRTC_LOG_ERROR,
+                std::string("failed to apply remote description: ") + e.what());
+        return -1;
+    }catch(...){
+        EmitLog(WEBRTC_LOG_ERROR,
+                std::string("failed to apply remote description"));
+        return -1;
+    }
 }
-int WebRtcPublisher::AddRemoteCandidate(const char* candidate,const char* mid){
-    (void)candidate;
-    (void)mid;
 
-    EmitLog(WEBRTC_LOG_WARN,"SetRemoteDescription is not implemented in Part 4 yet");
-    return -1;
+int WebRtcPublisher::AddRemoteCandidate(const char* candidate,const char* mid){
+    if(!m_PeerConnection){
+        EmitLog(WEBRTC_LOG_ERROR,"peer connection is null");
+        return -1;
+    }
+
+    if(!m_PeerConnection->remoteDescription().has_value()){
+        EmitLog(WEBRTC_LOG_ERROR,
+                std::string("remote description must be set before adding remote candidates"));
+        return -1;
+    }
+
+    const std::string candidateText = CopyCString(candidate);
+    if(candidateText.empty()){
+        EmitLog(WEBRTC_LOG_ERROR,"remote candidate is empty");
+        return -1;
+    }
+
+    const std::string midText = CopyCString(mid);
+
+    try{
+        rtc::Candidate remoteCandidate = midText.empty() ? 
+            rtc::Candidate(candidateText) : rtc::Candidate(candidateText,midText);
+        
+        m_PeerConnection->addRemoteCandidate(remoteCandidate);
+
+        if(midText.empty()){
+            EmitLog(WEBRTC_LOG_INFO, "remote candidate added");
+        }else{
+            EmitLog(WEBRTC_LOG_INFO,std::string("remote candidate added: mid=") + midText);
+        }
+
+        return 0;
+    }catch(const std::exception& e){
+        EmitLog(WEBRTC_LOG_ERROR,
+                std::string("failed to add remote candidate: ") + e.what());
+        return -1;
+    }catch(...){
+        EmitLog(WEBRTC_LOG_ERROR,
+                std::string("failed to add remote candidate"));
+        return -1;
+    }
 }
 
 void WebRtcPublisher::Stop(){
+    m_VideoNackResponder.reset();
+    m_VideoSrReporter.reset();
+    m_VideoPacketizer.reset();
+    m_VideoRtpConfig.reset();
+
     if(m_VideoTrack){
         //std::shared_ptr 虽然行为像指针，但它本身是一个对象，不是裸指针。
         /*
@@ -330,6 +571,8 @@ void WebRtcPublisher::Stop(){
         m_PeerConnection.reset();
     }
 
+    m_VideoTrackOpen = false;
+    m_HasWarnedTrackNotOpen = false;
     m_Started = false;
     ChangeState(WEBRTC_PEER_STATE_CLOSED);
 }
