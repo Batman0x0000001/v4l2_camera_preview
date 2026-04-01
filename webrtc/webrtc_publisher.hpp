@@ -17,6 +17,8 @@ namespace rtc{
     class RtcpNackResponder;
 }
 
+class WebRtcSignalingServer;
+
 class WebRtcPublisher
 {
 private://data
@@ -24,6 +26,7 @@ private://data
     WebRtcSenderCallbacks m_Callbacks{};
 
     std::shared_ptr<rtc::PeerConnection> m_PeerConnection;
+    std::unique_ptr<WebRtcSignalingServer> m_SignalingServer;
     std::shared_ptr<rtc::Track> m_VideoTrack;//表示“PeerConnection 上那条视频轨道”
 
     //维护 RTP 发送所需的配置，比如 SSRC、payload type、clock rate
@@ -64,6 +67,8 @@ private://method
     void EmitLog(WebRtcBridgeLogLevel level,const std::string& message) const;
     void EmitLocalDescription(const rtc::Description& description);
     void EmitLocalCandidate(const rtc::Candidate& candidate);
+
+    int StartSignalingServer();
 public:
     WebRtcPublisher(const WebRtcSenderConfig& config,const WebRtcSenderCallbacks& callbacks);
     ~WebRtcPublisher();

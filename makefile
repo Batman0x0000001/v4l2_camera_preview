@@ -25,7 +25,7 @@ C_SRCS := \
 CPP_SRCS := \
 	webrtc/webrtc_bridge.cpp \
 	webrtc/webrtc_publisher.cpp \
-	# webrtc/webrtc_signaling.cpp
+	webrtc/webrtc_signaling.cpp
 
 C_OBJS   := $(C_SRCS:.c=.o)
 CPP_OBJS := $(CPP_SRCS:.cpp=.o)

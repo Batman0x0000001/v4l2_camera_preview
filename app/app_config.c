@@ -78,7 +78,7 @@ void app_config_init_default(AppConfig *cfg)
      *   start_record_on || auto_record_on_start
      * 共同决定，语义收敛在 app_apply.c 中。
      */
-    cfg->start_stream_on = 0;
+    cfg->start_stream_on = 1;
     cfg->start_record_on = 0;
     cfg->auto_record_on_start = 0;
 
@@ -94,7 +94,7 @@ void app_config_init_default(AppConfig *cfg)
 
 
     cfg->stream_backend = STREAM_BACKEND_WEBRTC;
-    app_copy_text(cfg->stream_url,sizeof(cfg->stream_url),"restp://127.0.0.1:8554/cam");
+    app_copy_text(cfg->stream_url,sizeof(cfg->stream_url),"rtsp://127.0.0.1:8554/cam");
 }
 
 void app_print_banner(void)

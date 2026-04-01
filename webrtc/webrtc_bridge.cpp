@@ -78,6 +78,7 @@ static void webrtc_copy_text(char *dst, size_t dst_size, const char *src) {
 
 
 //extern "C" 本质上是在 C++ 代码里开一个"C ABI 的窗口"，是跨语言互操作的基石。
+
 extern "C" void webrtc_sender_config_init(WebRtcSenderConfig *cfg) {
     if (!cfg) {
         return;
@@ -94,6 +95,8 @@ extern "C" void webrtc_sender_config_init(WebRtcSenderConfig *cfg) {
 
     cfg->payload_type = 96;
     cfg->video_clock_rate = 90000;
+
+    cfg->signaling_port = 9001;
 }
 
 extern "C" void webrtc_sender_callbacks_init(WebRtcSenderCallbacks *callbacks) {

@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>PushStream WebSocket Receiver</title>
+  <style>
+    body { font-family: sans-serif; margin: 16px; }
+    input { width: 420px; }
+    button { margin-left: 8px; }
+    pre { background: #f5f5f5; padding: 12px; white-space: pre-wrap; }
+    video { width: 720px; max-width: 100%; background: #000; display: block; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1>PushStream WebSocket Receiver</h1>
+
+  <div>
+    <label>Signaling URL:</label>
+    <input id="wsUrl" value="ws://127.0.0.1:9001" />
+    <button id="btnConnect">Connect</button>
+  </div>
+
+  <pre id="log"></pre>
+  <video id="remoteVideo" autoplay playsinline controls muted></video>
+
+  <script>
+    let pc = null;
+    let ws = null;
+    const pendingNativeCandidates = [];
+
+    const wsUrlInput = document.getElementById('wsUrl');
+    const btnConnect = document.getElementById('btnConnect');
+    const logView = document.getElementById('log');
+    const remoteVideo = document.getElementById('remoteVideo');
+
+    function log(message) {
+      logView.textContent += message + '\n';
+    }
+
+    function buildDescriptionMessage(type, sdp) {
+      return type + '\n' + sdp;
+    }
+
+    function buildCandidateMessage(mid, candidate) {
+      return 'candidate\nmid=' + (mid || '') + '\n' + candidate;
+    }
+
+    function parseSignalMessage(text) {
+      if (text.startsWith('offer\n')) {
+        return {
+          type: 'offer',
+          sdp: text.slice('offer\n'.length)
+        };
+      }
+
+      if (text.startsWith('candidate\n')) {
+        const body = text.slice('candidate\n'.length);
+        const firstNewline = body.indexOf('\n');
+        if (firstNewline < 0) {
+          return null;
+        }
+
+        const firstLine = body.slice(0, firstNewline);
+        if (!firstLine.startsWith('mid=')) {
+          return null;
+        }
+
+        return {
+          type: 'candidate',
+          mid: firstLine.slice(4),
+          candidate: body.slice(firstNewline + 1).trim()
+        };
+      }
+
+      return null;
+    }
+
+    function ensurePeerConnection() {
+      if (pc) {
+        return pc;
+      }
+
+      pc = new RTCPeerConnection({
+        iceServers: [
+          { urls: ['stun:stun.l.google.com:19302'] }
+        ]
+      });
+
+      pc.onconnectionstatechange = () => {
+        log('connectionState=' + pc.connectionState);
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        log('iceConnectionState=' + pc.iceConnectionState);
+      };
+
+      pc.onicegatheringstatechange = () => {
+        log('iceGatheringState=' + pc.iceGatheringState);
+      };
+
+      pc.ontrack = (event) => {
+        log('remote track received: kind=' + event.track.kind);
+
+        if (event.streams && event.streams.length > 0) {
+          remoteVideo.srcObject = event.streams[0];
+        } else {
+          remoteVideo.srcObject = new MediaStream([event.track]);
+        }
+      };
+
+      pc.onicecandidate = (event) => {
+        if (!event.candidate) {
+          log('browser ICE gathering complete');
+          return;
+        }
+
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          log('websocket not open, browser candidate skipped');
+          return;
+        }
+
+        ws.send(
+          buildCandidateMessage(
+            event.candidate.sdpMid || '',
+            event.candidate.candidate
+          )
+        );
+        log('browser candidate sent');
+      };
+
+      return pc;
+    }
+
+    async function flushPendingNativeCandidates() {
+      if (!pc || !pc.remoteDescription) {
+        return;
+      }
+
+      while (pendingNativeCandidates.length > 0) {
+        const item = pendingNativeCandidates.shift();
+        await pc.addIceCandidate({
+          candidate: item.candidate,
+          sdpMid: item.mid || null
+        });
+        log('queued native candidate applied');
+      }
+    }
+
+    async function handleOffer(offerSdp) {
+      const localPc = ensurePeerConnection();
+
+      await localPc.setRemoteDescription({
+        type: 'offer',
+        sdp: offerSdp
+      });
+      log('remote offer applied');
+
+      await flushPendingNativeCandidates();
+
+      const answer = await localPc.createAnswer();
+      await localPc.setLocalDescription(answer);
+
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        throw new Error('websocket is not open');
+      }
+
+      ws.send(buildDescriptionMessage('answer', localPc.localDescription.sdp));
+      log('browser answer sent');
+    }
+
+    async function handleCandidate(mid, candidate) {
+      const localPc = ensurePeerConnection();
+
+      if (!localPc.remoteDescription) {
+        pendingNativeCandidates.push({ mid, candidate });
+        log('native candidate queued until offer is applied');
+        return;
+      }
+
+      await localPc.addIceCandidate({
+        candidate,
+        sdpMid: mid || null
+      });
+      log('native candidate applied');
+    }
+
+    function connectWebSocket() {
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        log('websocket already active');
+        return;
+      }
+
+      ws = new WebSocket(wsUrlInput.value);
+
+      ws.onopen = () => {
+        log('websocket connected');
+      };
+
+      ws.onclose = () => {
+        log('websocket closed');
+      };
+
+      ws.onerror = (event) => {
+        log('websocket error');
+        console.error(event);
+      };
+
+      ws.onmessage = async (event) => {
+        try {
+          const parsed = parseSignalMessage(String(event.data));
+          if (!parsed) {
+            log('ignored unknown signaling message');
+            return;
+          }
+
+          if (parsed.type === 'offer') {
+            await handleOffer(parsed.sdp);
+            return;
+          }
+
+          if (parsed.type === 'candidate') {
+            await handleCandidate(parsed.mid, parsed.candidate);
+            return;
+          }
+        } catch (err) {
+          log('failed to handle signaling message: ' + err);
+          console.error(err);
+        }
+      };
+    }
+
+    btnConnect.addEventListener('click', () => {
+      connectWebSocket();
+    });
+  </script>
+</body>
+</html>

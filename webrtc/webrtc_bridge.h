@@ -105,6 +105,8 @@ typedef struct WebRtcSenderConfig{
     char turn_url[256];
     char turn_username[128];
     char turn_password[128];
+
+    int signaling_port;
 }WebRtcSenderConfig;
 
 typedef struct WebRtcEncodedVideoFrame{

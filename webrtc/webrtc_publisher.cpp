@@ -1,5 +1,5 @@
 #include"webrtc_publisher.hpp"
-
+#include"webrtc_signaling.hpp"
 #include"rtc/rtc.hpp"
 
 #include<exception>
@@ -113,34 +113,46 @@ void WebRtcPublisher::EmitLog(WebRtcBridgeLogLevel level,const std::string& mess
     m_Callbacks.on_log(level,message.c_str(),m_Callbacks.userdata);
 }
 
-void WebRtcPublisher::EmitLocalDescription(const rtc::Description& desciption){
-    if(!m_Callbacks.on_local_description){
+void WebRtcPublisher::EmitLocalDescription(const rtc::Description& description){
+    if(m_Callbacks.on_local_description){
+        //调用 libdatachannel 的方法，返回 SDP 类型字符串，值为 "offer" 或 "answer"。
+        const std::string type = description.typeString();
+
+        //rtc::Description 重载了 std::string 的类型转换运算符，所以可以直接用 std::string(description) 提取完整的 SDP 文本内容。
+        const std::string sdp = std::string(description);
+
+        //.c_str() 把 std::string 转成 const char *，因为 C 接口只认裸指针。
+        m_Callbacks.on_local_description(type.c_str(),sdp.c_str(),m_Callbacks.userdata);
+        
+        if(m_SignalingServer && type == "offer"){
+            m_SignalingServer->SendOffer(sdp);
+        }
         return;
     }
 
-    //调用 libdatachannel 的方法，返回 SDP 类型字符串，值为 "offer" 或 "answer"。
-    const std::string type = desciption.typeString();
-
-    //rtc::Description 重载了 std::string 的类型转换运算符，所以可以直接用 std::string(description) 提取完整的 SDP 文本内容。
-    const std::string sdp = std::string(desciption);
-
-    //.c_str() 把 std::string 转成 const char *，因为 C 接口只认裸指针。
-    m_Callbacks.on_local_description(type.c_str(),sdp.c_str(),m_Callbacks.userdata);
+    if(m_SignalingServer && description.typeString() == "offer"){
+        m_SignalingServer->SendOffer(std::string(description));
+    }
 }
 
-void WebRtcPublisher::EmitLocalCandidate(const rtc::Candidate& candidate){
-    if(!m_Callbacks.on_local_candidate){
-        return;
-    }
 
+void WebRtcPublisher::EmitLocalCandidate(const rtc::Candidate& candidate){
     //提取 ICE 候选字符串，内容类似：
     //candidate:1234567890 1 udp 2122260223 192.168.1.100 54321 typ host
     const std::string candidateText = candidate.candidate();
 
     //提取媒体流标识符，标识这个候选属于哪条媒体流，通常是 "0" 或 "video"。
     const std::string mid = candidate.mid();
+    
+    if(m_Callbacks.on_local_candidate){
+        m_Callbacks.on_local_candidate(candidateText.c_str(),mid.c_str(),m_Callbacks.userdata);
+    }
 
-    m_Callbacks.on_local_candidate(candidateText.c_str(),mid.c_str(),m_Callbacks.userdata);
+    if(m_SignalingServer){
+        m_SignalingServer->SendCandidate(mid,candidateText);
+    }
+    
+
 }
 
 void WebRtcPublisher::BindPeerCallbacks(){
@@ -385,6 +397,10 @@ int WebRtcPublisher::Start(){
         return 0;
     }
 
+    if(StartSignalingServer() < 0){
+        return -1;
+    }
+
     if(CreatePeerConnection() < 0){
         return -1;
     }
@@ -483,7 +499,7 @@ int WebRtcPublisher::SetRemoteDescription(const char* type,const char* sdp){
             effectiveType = remoteDescription.typeString();
         }
 
-        EmitLog(WEBRTC_LOG_ERROR,std::string("remote description applied: type=")+effectiveType);
+        EmitLog(WEBRTC_LOG_INFO,std::string("remote description applied: type=")+effectiveType);
 
         if(remoteDescription.type() == rtc::Description::Type::Offer){
             EmitLog(WEBRTC_LOG_WARN,"remote offer applied while auto negotiation is disabled;");
@@ -545,7 +561,40 @@ int WebRtcPublisher::AddRemoteCandidate(const char* candidate,const char* mid){
     }
 }
 
+int WebRtcPublisher::StartSignalingServer(){
+    if(m_SignalingServer){
+        return 0;
+    }
+
+    m_SignalingServer = std::make_unique<WebRtcSignalingServer>(
+        m_Config.signaling_port,
+        [this](const std::string& sdp){
+            if(SetRemoteDescription("answer",sdp.c_str()) < 0){
+                EmitLog(WEBRTC_LOG_ERROR,"failed to apply browser answer from websocket signaling");
+            }
+        },
+        [this](const std::string& mid,const std::string& candidate){
+            if(AddRemoteCandidate(candidate.c_str(),mid.empty() ? nullptr : mid.c_str()) < 0){
+                EmitLog(WEBRTC_LOG_ERROR,"failed to apply browser candidate from websocket signaling");
+            }
+        },
+        [this](WebRtcBridgeLogLevel level,const std::string& message){
+            EmitLog(level,message);
+        }
+    );
+
+    return m_SignalingServer->Start();
+}
+
 void WebRtcPublisher::Stop(){
+    // EmitLog(WEBRTC_LOG_INFO,"m_SignalingServer->Stop begin\n");
+    if(m_SignalingServer){
+        m_SignalingServer->Stop();
+        // EmitLog(WEBRTC_LOG_INFO,"m_SignalingServer->Stop end\n");
+        m_SignalingServer.reset();
+    }
+    
+
     m_VideoNackResponder.reset();
     m_VideoSrReporter.reset();
     m_VideoPacketizer.reset();
