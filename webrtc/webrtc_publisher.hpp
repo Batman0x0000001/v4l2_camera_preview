@@ -4,6 +4,7 @@
 
 #include<memory>
 #include<string>
+#include <rtc/common.hpp> 
 
 //前向声明:只告诉编译器"这个类存在"，但不给出完整定义：
 namespace rtc{
@@ -56,6 +57,14 @@ private://data
     bool m_VideoTrackOpen = false;
     bool m_HasWarnedTrackNotOpen = false;
 
+    bool m_WaitingForFirstKeyframe = true;
+    bool m_HasWarnedWaitingKeyframe = false;
+
+
+    // rtc::binary m_CachedKeyframeSample;
+    // bool m_HasCachedKeyframe = false;    
+    // bool m_HasPrimedDecoder = false;
+
 private://method
     int CreatePeerConnection();
     void BindPeerCallbacks();
@@ -69,6 +78,9 @@ private://method
     void EmitLocalCandidate(const rtc::Candidate& candidate);
 
     int StartSignalingServer();
+
+    // void CacheKeyframeSample(const WebRtcEncodedVideoFrame* frame);
+    // int PrimeDecoderWithCachedKeyframe();
 public:
     WebRtcPublisher(const WebRtcSenderConfig& config,const WebRtcSenderCallbacks& callbacks);
     ~WebRtcPublisher();

@@ -1,6 +1,8 @@
 #include"webrtc_publisher.hpp"
 #include"webrtc_signaling.hpp"
 #include"rtc/rtc.hpp"
+#include<chrono>
+#include<cstdio>
 
 #include<exception>
 #include<sstream>
@@ -47,21 +49,21 @@ rtc::Description::Type ParseDescriptionType(const std::string& type){
     return rtc::Description::Type::Unspec;
 }
 
-rtc::NalUnit::Separator DetectNalSeparator(const uint8_t* data,size_t size){
-    if(data && size >=4 && 
-        data[0] == 0x00 && data[1] == 0x00 && 
-        data[2] == 0x00 && data[3] == 0x01){
-        return rtc::NalUnit::Separator::LongStartSequence;
-    }
+// rtc::NalUnit::Separator DetectNalSeparator(const uint8_t* data,size_t size){
+//     if(data && size >=4 && 
+//         data[0] == 0x00 && data[1] == 0x00 && 
+//         data[2] == 0x00 && data[3] == 0x01){
+//         return rtc::NalUnit::Separator::LongStartSequence;
+//     }
 
-    if(data && size >=3 && 
-        data[0] == 0x00 && data[1] == 0x00 && 
-        data[2] == 0x01){
-        return rtc::NalUnit::Separator::ShortStartSequence;
-    }
+//     if(data && size >=3 && 
+//         data[0] == 0x00 && data[1] == 0x00 && 
+//         data[2] == 0x01){
+//         return rtc::NalUnit::Separator::ShortStartSequence;
+//     }
 
-    return rtc::NalUnit::Separator::Length;
-}
+//     return rtc::NalUnit::Separator::Length;
+// }
 
 const char* NalSeparatorName(rtc::NalUnit::Separator separator){
     switch(separator){
@@ -77,6 +79,108 @@ const char* NalSeparatorName(rtc::NalUnit::Separator separator){
             return "unknown";
     }
 }
+
+// bool TryGetNalPayloadOffset(const uint8_t* data, size_t size, size_t index, size_t* offset){
+//     if(!data || !offset || index >= size){
+//         return false;
+//     }
+
+//     if(index + 4 <= size &&
+//        data[index] == 0x00 && data[index + 1] == 0x00 &&
+//        data[index + 2] == 0x00 && data[index + 3] == 0x01){
+//         *offset = index + 4;
+//         return *offset < size;
+//     }
+
+//     if(index + 3 <= size &&
+//        data[index] == 0x00 && data[index + 1] == 0x00 &&
+//        data[index + 2] == 0x01){
+//         *offset = index + 3;
+//         return *offset < size;
+//     }
+
+//     return false;
+// }
+
+// void SummarizeH264Sample(const uint8_t* data,
+//                          size_t size,
+//                          bool* hasSps,
+//                          bool* hasPps,
+//                          bool* hasIdr,
+//                          std::string* profileLevelId){
+//     if(hasSps){
+//         *hasSps = false;
+//     }
+//     if(hasPps){
+//         *hasPps = false;
+//     }
+//     if(hasIdr){
+//         *hasIdr = false;
+//     }
+//     if(profileLevelId){
+//         profileLevelId->clear();
+//     }
+
+//     if(!data || size < 5){
+//         return;
+//     }
+
+//     for(size_t i = 0; i + 3 < size; ++i){
+//         size_t nalOffset = 0;
+//         if(!TryGetNalPayloadOffset(data, size, i, &nalOffset)){
+//             continue;
+//         }
+
+//         const uint8_t nalType = data[nalOffset] & 0x1F;
+//         if(nalType == 5 && hasIdr){
+//             *hasIdr = true;
+//         }else if(nalType == 7){
+//             if(hasSps){
+//                 *hasSps = true;
+//             }
+
+//             if(profileLevelId && profileLevelId->empty() && nalOffset + 3 < size){
+//                 char text[7];
+//                 std::snprintf(text,
+//                               sizeof(text),
+//                               "%02x%02x%02x",
+//                               data[nalOffset + 1],
+//                               data[nalOffset + 2],
+//                               data[nalOffset + 3]);
+//                 *profileLevelId = text;
+//             }
+//         }else if(nalType == 8 && hasPps){
+//             *hasPps = true;
+//         }
+//     }
+// }
+
+// std::string ExtractH264SdpLines(const std::string& sdp){
+//     std::istringstream iss(sdp);
+//     std::ostringstream oss;
+//     std::string line;
+//     bool wroteAnyLine = false;
+
+//     while(std::getline(iss, line)){
+//         if(!line.empty() && line.back() == '\r'){
+//             line.pop_back();
+//         }
+
+//         if(line.rfind("m=video", 0) == 0 ||
+//            line.find("H264/90000") != std::string::npos ||
+//            line.rfind("a=fmtp:", 0) == 0 ||
+//            line.rfind("a=rtcp-fb:", 0) == 0){
+//             if(wroteAnyLine){
+//                 oss << "\n";
+//             }
+//             oss << line;
+//             wroteAnyLine = true;
+//         }
+//     }
+
+//     return oss.str();
+// }
+
 }//结束匿名空间
 
 WebRtcPublisher::WebRtcPublisher(const WebRtcSenderConfig& config,const WebRtcSenderCallbacks& callbacks)
@@ -114,6 +218,16 @@ void WebRtcPublisher::EmitLog(WebRtcBridgeLogLevel level,const std::string& mess
 }
 
 void WebRtcPublisher::EmitLocalDescription(const rtc::Description& description){
+    // const std::string type = description.typeString();
+    // const std::string sdp = std::string(description);
+    // const std::string h264Lines = ExtractH264SdpLines(sdp);
+
+    // if(!h264Lines.empty()){
+    //     EmitLog(WEBRTC_LOG_INFO,
+    //             std::string("local SDP H264 summary:\n") + h264Lines);
+    // }
+
+
     if(m_Callbacks.on_local_description){
         //调用 libdatachannel 的方法，返回 SDP 类型字符串，值为 "offer" 或 "answer"。
         const std::string type = description.typeString();
@@ -130,9 +244,10 @@ void WebRtcPublisher::EmitLocalDescription(const rtc::Description& description){
         return;
     }
 
-    if(m_SignalingServer && description.typeString() == "offer"){
-        m_SignalingServer->SendOffer(std::string(description));
-    }
+    // if(m_SignalingServer && type == "offer"){
+    //     m_SignalingServer->SendOffer(sdp);
+    // }
+    return;
 }
 
 
@@ -273,7 +388,9 @@ int WebRtcPublisher::AddVideoTrack(){
 
         m_VideoTrack->onOpen([this](){
             m_VideoTrackOpen = true;
-            EmitLog(WEBRTC_LOG_INFO,"video track opened");
+            m_WaitingForFirstKeyframe = true;
+            m_HasWarnedWaitingKeyframe = false;
+            EmitLog(WEBRTC_LOG_INFO,"video track opened, waiting for first keyframe");
         });
 
         EmitLog(WEBRTC_LOG_INFO,"video track added");
@@ -339,7 +456,8 @@ int WebRtcPublisher::ConfigureVideoSender(const WebRtcEncodedVideoFrame* frame){
     const int payloadType = m_Config.payload_type > 0 ? m_Config.payload_type : 96;
     
     //检测 NAL 分隔符，需要知道输入是哪种格式才能正确打包，所以用第一帧数据检测。
-    const auto separator = DetectNalSeparator(frame->data,frame->size);
+    // const auto separator = DetectNalSeparator(frame->data,frame->size);
+    const auto separator = rtc::NalUnit::Separator::StartSequence;
 
     try
     {
@@ -430,6 +548,10 @@ int WebRtcPublisher::SendVideo(const WebRtcEncodedVideoFrame* frame){
         return -1;
     }
 
+    // if (frame->is_keyframe){
+    //     CacheKeyframeSample(frame);
+    // }
+
     if(!m_VideoTrackOpen || !m_VideoTrack->isOpen()){
         if(!m_HasWarnedTrackNotOpen){
             EmitLog(WEBRTC_LOG_WARN,"video track is not open yet, dropping encoded frames");
@@ -438,20 +560,38 @@ int WebRtcPublisher::SendVideo(const WebRtcEncodedVideoFrame* frame){
         return 0;
     }
 
-    if(ConfigureVideoSender(frame) < 0){
+    if (ConfigureVideoSender(frame) < 0) {
         return -1;
     }
+    if (m_WaitingForFirstKeyframe) {
+        if (!frame->is_keyframe) {
+            if (!m_HasWarnedWaitingKeyframe) {
+                EmitLog(WEBRTC_LOG_INFO,
+                        "track is open but waiting for first keyframe, dropping non-keyframes");
+                m_HasWarnedWaitingKeyframe = true;
+            }
+            return 0;
+        }
+        // const int primeRet = PrimeDecoderWithCachedKeyframe();
+        // if (primeRet < 0) {
+        //     return -1;
+        // }
 
-    const int64_t ptsUs = frame->pts_us >= 0 ? frame->pts_us : 0;
+
+        m_WaitingForFirstKeyframe = false;
+        m_HasWarnedWaitingKeyframe = false;
+        EmitLog(WEBRTC_LOG_INFO,
+                "first keyframe received, decoder primed, entering steady video transmission");
+    }
 
     try
     {
+        const int64_t ptsUs = frame->pts_us >= 0 ? frame->pts_us : 0;
         m_VideoTrack->sendFrame(
             reinterpret_cast<const rtc::byte*>(frame->data),
             frame->size,
-            std::chrono::duration<double,std::micro>(static_cast<double>(ptsUs))
+            std::chrono::duration<double, std::micro>(static_cast<double>(ptsUs))
         );
-
         return 0;
     }
     catch(const std::exception& e)
@@ -500,6 +640,13 @@ int WebRtcPublisher::SetRemoteDescription(const char* type,const char* sdp){
         }
 
         EmitLog(WEBRTC_LOG_INFO,std::string("remote description applied: type=")+effectiveType);
+
+        // const std::string h264Lines = ExtractH264SdpLines(sdpText);
+        // if(!h264Lines.empty()){
+        //     EmitLog(WEBRTC_LOG_INFO,std::string("remote SDP H264 summary:\n") + h264Lines);
+        // }
+
+
 
         if(remoteDescription.type() == rtc::Description::Type::Offer){
             EmitLog(WEBRTC_LOG_WARN,"remote offer applied while auto negotiation is disabled;");
@@ -622,6 +769,97 @@ void WebRtcPublisher::Stop(){
 
     m_VideoTrackOpen = false;
     m_HasWarnedTrackNotOpen = false;
+    m_WaitingForFirstKeyframe = true;
+    m_HasWarnedWaitingKeyframe = false;
+    // m_CachedKeyframeSample.clear();
+    // m_HasCachedKeyframe = false;
+    // m_HasPrimedDecoder = false;
     m_Started = false;
     ChangeState(WEBRTC_PEER_STATE_CLOSED);
 }
+
+// void WebRtcPublisher::CacheKeyframeSample(const WebRtcEncodedVideoFrame* frame) {
+//     const rtc::byte* begin;
+//     const rtc::byte* end;
+
+//     bool hasSps = false;
+//     bool hasPps = false;
+//     bool hasIdr = false;
+//     std::string profileLevelId;
+//     std::ostringstream oss;
+
+//     if (!frame || !frame->data || frame->size == 0 || !frame->is_keyframe) {
+//         return;
+//     }
+
+//     begin = reinterpret_cast<const rtc::byte*>(frame->data);
+//     end = begin + frame->size;
+
+//     m_CachedKeyframeSample.assign(begin, end);
+//     m_HasCachedKeyframe = true;
+
+//     SummarizeH264Sample(frame->data,
+//                         frame->size,
+//                         &hasSps,
+//                         &hasPps,
+//                         &hasIdr,
+//                         &profileLevelId);
+
+//     oss << "cached latest keyframe sample for decoder priming"
+//         << " [SPS=" << (hasSps ? 1 : 0)
+//         << ", PPS=" << (hasPps ? 1 : 0)
+//         << ", IDR=" << (hasIdr ? 1 : 0)
+//         << ", size=" << frame->size;
+
+//     if(!profileLevelId.empty()){
+//         oss << ", profile-level-id=" << profileLevelId;
+//     }
+
+//     oss << "]";
+//     EmitLog(WEBRTC_LOG_INFO,oss.str());
+// }
+
+// int WebRtcPublisher::PrimeDecoderWithCachedKeyframe() {
+//     uint32_t frameTimestampStep;
+
+//     if (!m_VideoTrack) {
+//         EmitLog(WEBRTC_LOG_ERROR, "video track is null");
+//         return -1;
+//     }
+
+//     if (!m_VideoRtpConfig) {
+//         EmitLog(WEBRTC_LOG_ERROR, "video RTP config is null");
+//         return -1;
+//     }
+
+//     if (!m_HasCachedKeyframe || m_CachedKeyframeSample.empty()) {
+//         EmitLog(WEBRTC_LOG_WARN, "no cached keyframe available for decoder priming");
+//         return 1;
+//     }
+
+//     try {
+//         frameTimestampStep = m_VideoRtpConfig->secondsToTimestamp(
+//             1.0 / static_cast<double>(m_Config.fps > 0 ? m_Config.fps : 30));
+
+//         m_VideoRtpConfig->timestamp =
+//             m_VideoRtpConfig->startTimestamp - frameTimestampStep * 2;
+
+//         m_VideoTrack->send(m_CachedKeyframeSample);
+//         m_VideoRtpConfig->timestamp += frameTimestampStep;
+
+//         m_VideoTrack->send(m_CachedKeyframeSample);
+
+//         m_HasPrimedDecoder = true;
+
+//         EmitLog(WEBRTC_LOG_INFO,
+//                 "decoder primed with cached keyframe sample (sent twice)");
+//         return 0;
+//     } catch (const std::exception& e) {
+//         EmitLog(WEBRTC_LOG_ERROR,
+//                 std::string("failed to prime decoder: ") + e.what());
+//         return -1;
+//     } catch (...) {
+//         EmitLog(WEBRTC_LOG_ERROR, "failed to prime decoder");
+//         return -1;
+//     }
+// }

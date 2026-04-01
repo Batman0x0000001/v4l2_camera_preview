@@ -19,8 +19,13 @@
     <input id="wsUrl" value="ws://127.0.0.1:9001" />
     <button id="btnConnect">Connect</button>
   </div>
+  <div style="margin-top: 12px;">
+    <button id="btnShowStates">Show Peer States</button>
+    <button id="btnGetStats">Get Video Stats</button>
+  </div>
 
   <pre id="log"></pre>
+  <pre id="statsView"></pre>
   <video id="remoteVideo" autoplay playsinline controls muted></video>
 
   <script>
@@ -33,8 +38,27 @@
     const logView = document.getElementById('log');
     const remoteVideo = document.getElementById('remoteVideo');
 
+    const btnShowStates = document.getElementById('btnShowStates');
+    const btnGetStats = document.getElementById('btnGetStats');
+    const statsView = document.getElementById('statsView');
+
     function log(message) {
       logView.textContent += message + '\n';
+    }
+
+    function showPeerStates() {
+      if (!pc) {
+        log('PeerConnection has not been created yet');
+        return;
+      }
+
+      log(
+        'states => ' +
+        'signalingState=' + pc.signalingState +
+        ', iceConnectionState=' + pc.iceConnectionState +
+        ', iceGatheringState=' + pc.iceGatheringState +
+        ', connectionState=' + pc.connectionState
+      );
     }
 
     function buildDescriptionMessage(type, sdp) {
@@ -128,6 +152,15 @@
         log('browser candidate sent');
       };
 
+      pc.onicecandidateerror = (event) => {
+        log(
+          'icecandidateerror: ' +
+          'url=' + event.url +
+          ', errorCode=' + event.errorCode +
+          ', errorText=' + event.errorText
+        );
+      };
+
       return pc;
     }
 
@@ -144,6 +177,42 @@
         });
         log('queued native candidate applied');
       }
+    }
+
+    async function getVideoStats() {
+      if (!pc) {
+        log('PeerConnection has not been created yet');
+        return;
+      }
+
+      const stats = await pc.getStats();
+      let lines = [];
+
+      stats.forEach((report) => {
+        if (report.type === 'inbound-rtp' && report.kind === 'video') {
+          lines.push('inbound-rtp(video)');
+          lines.push('  framesReceived=' + (report.framesReceived ?? 'n/a'));
+          lines.push('  framesDecoded=' + (report.framesDecoded ?? 'n/a'));
+          lines.push('  keyFramesDecoded=' + (report.keyFramesDecoded ?? 'n/a'));
+          lines.push('  frameWidth=' + (report.frameWidth ?? 'n/a'));
+          lines.push('  frameHeight=' + (report.frameHeight ?? 'n/a'));
+          lines.push('  bytesReceived=' + (report.bytesReceived ?? 'n/a'));
+          lines.push('  packetsReceived=' + (report.packetsReceived ?? 'n/a'));
+          lines.push('  packetsLost=' + (report.packetsLost ?? 'n/a'));
+          lines.push('');
+        }
+
+        if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+          lines.push('candidate-pair(succeeded)');
+          lines.push('  currentRoundTripTime=' + (report.currentRoundTripTime ?? 'n/a'));
+          lines.push('  availableOutgoingBitrate=' + (report.availableOutgoingBitrate ?? 'n/a'));
+          lines.push('');
+        }
+      });
+
+      statsView.textContent = lines.length > 0
+        ? lines.join('\n')
+        : 'No useful video stats yet';
     }
 
     async function handleOffer(offerSdp) {
@@ -231,6 +300,19 @@
 
     btnConnect.addEventListener('click', () => {
       connectWebSocket();
+    });
+
+    btnShowStates.addEventListener('click', () => {
+      showPeerStates();
+    });
+
+    btnGetStats.addEventListener('click', async () => {
+      try {
+        await getVideoStats();
+      } catch (err) {
+        log('getStats failed: ' + err);
+        console.error(err);
+      }
     });
   </script>
 </body>

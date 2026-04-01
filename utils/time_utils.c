@@ -1,6 +1,6 @@
 #include "time_utils.h"
 #include <stdint.h>
-#include <linux/time.h>
+#include <time.h>
 
 uint64_t app_now_monotonic_us(void)
 {

@@ -440,13 +440,70 @@ void stream_state_init(AppState *app, const char *url, int fps,StreamBackendType
     stream_reset_runtime_state(app);
 }
 
+static void stream_apply_webrtc_h264_options(AppState *app, AVDictionary **codec_opts)
+{
+    int fps;
+    char x264_params[256];
+
+    if (!app || !app->stream.enc_ctx) {
+        return;
+    }
+
+    fps = (app->stream.fps > 0) ? app->stream.fps : 30;
+
+    /*
+     * WebRTC / browser 更喜欢：
+     * - baseline profile
+     * - 无 B 帧
+     * - 固定 GOP
+     * - in-band SPS/PPS
+     */
+    app->stream.enc_ctx->gop_size = fps;
+    app->stream.enc_ctx->max_b_frames = 0;
+    app->stream.enc_ctx->refs = 1;
+
+    av_opt_set(app->stream.enc_ctx->priv_data, "preset", "veryfast", 0);
+    av_opt_set(app->stream.enc_ctx->priv_data, "tune", "zerolatency", 0);
+    av_opt_set(app->stream.enc_ctx->priv_data, "profile", "baseline", 0);
+    av_opt_set(app->stream.enc_ctx->priv_data, "level", "3.1", 0);
+
+    /*
+     * 对 libx264 最关键：
+     * - repeat-headers=1 让关键帧附近带上 SPS/PPS
+     * - annexb=1 输出 Annex B 起始码格式
+     * - keyint/min-keyint 固定关键帧周期
+     * - scenecut=0 避免 GOP 被场景切换打乱
+     */
+    if (app->stream.encoder &&
+        strstr(app->stream.encoder->name, "libx264") != NULL) {
+        snprintf(x264_params,
+                 sizeof(x264_params),
+                 "repeat-headers=1:annexb=1:keyint=%d:min-keyint=%d:scenecut=0:bframes=0:ref=1",
+                 fps,
+                 fps);
+
+        av_dict_set(codec_opts, "x264-params", x264_params, 0);
+    }
+
+    LOG_INFO("webrtc h264 encoder config: codec=%s gop=%d profile=baseline",
+             app->stream.encoder ? app->stream.encoder->name : "unknown",
+             fps);
+}
+
 static int stream_init_encoder(AppState *app)
 {
     int ret;
+    AVDictionary *codec_opts = NULL;
 
-    app->stream.encoder = avcodec_find_encoder(AV_CODEC_ID_H264);
+    // app->stream.encoder = avcodec_find_encoder(AV_CODEC_ID_H264);
+    // if (!app->stream.encoder) {
+    //     LOG_ERROR("avcodec_find_encoder(H264) failed");
+    //     return -1;
+    // }
+
+    app->stream.encoder = avcodec_find_encoder_by_name("libx264");
     if (!app->stream.encoder) {
-        LOG_ERROR("avcodec_find_encoder(H264) failed");
+        LOG_ERROR("avcodec_find_encoder_by_name(libx264) failed");
         return -1;
     }
 
@@ -466,15 +523,11 @@ static int stream_init_encoder(AppState *app)
     app->stream.enc_ctx->max_b_frames = 0;
     app->stream.enc_ctx->bit_rate = 1000000;
 
-    /*
-     * 低延迟推流的常见设置：
-     * - veryfast: 编码开销较低
-     * - zerolatency: 尽量减少缓存与重排序
-     */
-    av_opt_set(app->stream.enc_ctx->priv_data, "preset", "veryfast", 0);
-    av_opt_set(app->stream.enc_ctx->priv_data, "tune", "zerolatency", 0);
+    stream_apply_webrtc_h264_options(app,&codec_opts);
 
-    ret = avcodec_open2(app->stream.enc_ctx, app->stream.encoder, NULL);
+    ret = avcodec_open2(app->stream.enc_ctx, app->stream.encoder, &codec_opts);
+    av_dict_free(&codec_opts);
+
     if (ret < 0) {
         LOG_ERROR("avcodec_open2 failed");
         return -1;
