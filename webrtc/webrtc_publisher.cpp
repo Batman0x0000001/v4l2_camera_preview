@@ -6,7 +6,7 @@
 
 #include<exception>
 #include<sstream>
-#include<string>
+#include<cstring>
 #include<utility>
 
 // 这里的东西只在当前 .cpp 文件内可见,在匿名命名空间里再加 static 是多余的,加不加效果一样
@@ -180,6 +180,28 @@ const char* NalSeparatorName(rtc::NalUnit::Separator separator){
 
 //     return oss.str();
 // }
+
+void WriteBe16(rtc::byte* dst, uint16_t value){
+    dst[0] = static_cast<rtc::byte>((value >> 8) & 0xFF);
+    dst[1] = static_cast<rtc::byte>(value & 0xFF);
+}
+
+void WriteBe32(rtc::byte* dst, uint32_t value){
+    dst[0] = static_cast<rtc::byte>((value >> 24) & 0xFF);
+    dst[1] = static_cast<rtc::byte>((value >> 16) & 0xFF);
+    dst[2] = static_cast<rtc::byte>((value >> 8) & 0xFF);
+    dst[3] = static_cast<rtc::byte>(value & 0xFF);
+}
+
+uint32_t AudioPtsUsToRtpTimestamp(int64_t ptsUs, uint32_t sampleRate){
+    if(ptsUs <= 0 || sampleRate == 0){
+        return 0;
+    }
+
+    const uint64_t scaled =
+        (static_cast<uint64_t>(ptsUs) * static_cast<uint64_t>(sampleRate)) / 1000000ULL;
+    return static_cast<uint32_t>(scaled & 0xFFFFFFFFu);
+}
 
 }//结束匿名空间
 
@@ -373,7 +395,7 @@ int WebRtcPublisher::AddVideoTrack(){
     }
 
     //payload type 是 RTP 协议里标识编码格式的数字，H264 的动态 payload type 范围是 96-127，没有配置就默认用 96。
-    const int payloadType = m_Config.payload_type > 0 ? m_Config.payload_type : 96;
+    const int payloadType = m_Config.video_payload_type > 0 ? m_Config.video_payload_type : 96;
 
     try{
         rtc::Description::Video video(m_VideoMid,rtc::Description::Direction::SendOnly);
@@ -419,6 +441,68 @@ int WebRtcPublisher::AddVideoTrack(){
     }
 }
 
+int WebRtcPublisher::AddAudioTrack(){
+    /*
+        rtc::Description::Audio ...
+        audio.addOpusCodec(...)
+        audio.addSSRC(...)
+        m_AudioTrack = m_PeerConnection->addTrack(audio);
+    */
+    if(!m_PeerConnection){
+        EmitLog(WEBRTC_LOG_ERROR,"peer connection is null");
+        return -1;
+    }
+
+    const std::string codec = CopyCString(m_Config.audio_codec);
+    if(!codec.empty() && codec != "OPUS"){
+        EmitLog(WEBRTC_LOG_ERROR,"current audio path only supports Opus");
+        return -1;
+    }
+
+    const int payloadType = m_Config.audio_payload_type > 0 ? m_Config.audio_payload_type : 111;
+
+    try{
+        rtc::Description::Audio audio(m_AudioMid,rtc::Description::Direction::SendOnly);
+        audio.addOpusCodec(payloadType);
+        audio.addSSRC(m_AudioSsrc,m_AudioCname,m_AudioMsid,m_AudioMid);
+
+        m_AudioTrack = m_PeerConnection->addTrack(audio);
+        if(!m_AudioTrack){
+            EmitLog(WEBRTC_LOG_ERROR,"addTrack(audio) returned null");
+            return -1;
+        }
+
+        m_AudioTrack->onOpen([this](){
+            m_AudioTrackOpen = true;
+            m_HasWarnedAudioTrackNotOpen = false;
+            EmitLog(WEBRTC_LOG_INFO,"audio track opened");
+        });
+
+        EmitLog(WEBRTC_LOG_INFO,"audio track added");
+        return 0;
+    }catch(const std::exception& e){
+        EmitLog(WEBRTC_LOG_ERROR,std::string("failed to add audio track:")+e.what());
+        return -1;
+    }catch(...){
+        EmitLog(WEBRTC_LOG_ERROR,"failed to add audio track");
+        return -1;
+    }
+}
+
+rtc::binary WebRtcPublisher::BuildOpusRtpPacket(const WebRtcEncodedAudioFrame* frame,uint8_t payloadType,uint16_t sequence,uint32_t timestamp)const{
+    rtc::binary packet(12 + frame->size);
+
+    packet[0] = static_cast<rtc::byte>(0x80);                 // V=2,P=0,X=0,CC=0
+    packet[1] = static_cast<rtc::byte>(payloadType & 0x7F);   // M=0, PT=payloadType
+    WriteBe16(packet.data() + 2, sequence);
+    WriteBe32(packet.data() + 4, timestamp);
+    WriteBe32(packet.data() + 8, m_AudioSsrc);
+
+    std::memcpy(packet.data() + 12, frame->data, frame->size);
+    return packet;    
+}
+
+
 int WebRtcPublisher::StartLocalOffer(){
     if(!m_PeerConnection){
         EmitLog(WEBRTC_LOG_ERROR,"peer connection is null");
@@ -453,9 +537,10 @@ int WebRtcPublisher::ConfigureVideoSender(const WebRtcEncodedVideoFrame* frame){
         return -1;
     }
 
-    const int payloadType = m_Config.payload_type > 0 ? m_Config.payload_type : 96;
+    const int payloadType = m_Config.video_payload_type > 0 ? m_Config.video_payload_type : 96;
     
     //检测 NAL 分隔符，需要知道输入是哪种格式才能正确打包，所以用第一帧数据检测。
+    //NAL 是 H.264 特有的概念，音频没有对应物
     // const auto separator = DetectNalSeparator(frame->data,frame->size);
     const auto separator = rtc::NalUnit::Separator::StartSequence;
 
@@ -528,6 +613,13 @@ int WebRtcPublisher::Start(){
         return -1;
     }
 
+    if(m_Config.enable_audio){
+        if(AddAudioTrack() < 0){
+            Stop();
+            return -1;
+        }
+    }
+
     if(StartLocalOffer() < 0){
         Stop();
         return -1;
@@ -553,9 +645,9 @@ int WebRtcPublisher::SendVideo(const WebRtcEncodedVideoFrame* frame){
     // }
 
     if(!m_VideoTrackOpen || !m_VideoTrack->isOpen()){
-        if(!m_HasWarnedTrackNotOpen){
+        if(!m_HasWarnedVideoTrackNotOpen){
             EmitLog(WEBRTC_LOG_WARN,"video track is not open yet, dropping encoded frames");
-            m_HasWarnedTrackNotOpen = true;
+            m_HasWarnedVideoTrackNotOpen = true;
         }
         return 0;
     }
@@ -601,6 +693,63 @@ int WebRtcPublisher::SendVideo(const WebRtcEncodedVideoFrame* frame){
     }
     catch(...){
         EmitLog(WEBRTC_LOG_ERROR,"failed to send video frame");
+        return -1;
+    }
+    
+}
+
+int WebRtcPublisher::SendAudio(const WebRtcEncodedAudioFrame* frame){
+    if(!m_AudioTrack){
+        EmitLog(WEBRTC_LOG_ERROR,"audio track is null");
+        return -1;
+    }
+
+    if(!frame || !frame->data || frame->size == 0){
+        EmitLog(WEBRTC_LOG_ERROR,"invalid encoded audio frame");
+        return -1;
+    }
+
+    if(frame->sample_rate == 0 || frame->samples_per_channel == 0){
+        EmitLog(WEBRTC_LOG_ERROR,"invalid Opus timing fields");
+        return -1;
+    }
+
+    if(!m_AudioTrackOpen || !m_AudioTrack->isOpen()){
+        if(!m_HasWarnedAudioTrackNotOpen){
+            EmitLog(WEBRTC_LOG_WARN,"audio track is not open yet, dropping encoded audio frames");
+            m_HasWarnedAudioTrackNotOpen = true;
+        }
+        return 0;
+    }
+
+    if(!m_HasAudioRtpState){
+        m_AudioTimestamp = AudioPtsUsToRtpTimestamp(frame->pts_us, frame->sample_rate);
+        m_AudioSequence = 0;
+        m_HasAudioRtpState = true;
+    }
+   
+    try
+    {
+        const int payloadType = m_Config.audio_payload_type > 0 ? m_Config.audio_payload_type : 111;
+
+        rtc::binary packet = BuildOpusRtpPacket(frame,
+                                                static_cast<uint8_t>(payloadType),
+                                                m_AudioSequence,
+                                                m_AudioTimestamp);
+
+        m_AudioTrack->send(packet);
+
+        ++m_AudioSequence;
+        m_AudioTimestamp += frame->samples_per_channel;
+        return 0;
+    }
+    catch(const std::exception& e)
+    {
+        EmitLog(WEBRTC_LOG_ERROR,std::string("failed to send audio frame: ")+ e.what());
+        return -1;
+    }
+    catch(...){
+        EmitLog(WEBRTC_LOG_ERROR,"failed to send audio frame");
         return -1;
     }
     
@@ -756,6 +905,16 @@ void WebRtcPublisher::Stop(){
         m_VideoTrack.reset();
     }
 
+    if(m_AudioTrack){
+        m_AudioTrack.reset();
+    }
+
+    m_AudioTrackOpen = false;
+    m_HasWarnedAudioTrackNotOpen = false;
+    m_HasAudioRtpState = false;
+    m_AudioSequence = 0;
+    m_AudioTimestamp = 0;
+
     if(m_PeerConnection){
         try{
             m_PeerConnection->close();
@@ -768,7 +927,10 @@ void WebRtcPublisher::Stop(){
     }
 
     m_VideoTrackOpen = false;
-    m_HasWarnedTrackNotOpen = false;
+    m_AudioTrackOpen = false;
+    m_HasWarnedVideoTrackNotOpen = false;
+    m_HasWarnedAudioTrackNotOpen = false;
+    
     m_WaitingForFirstKeyframe = true;
     m_HasWarnedWaitingKeyframe = false;
     // m_CachedKeyframeSample.clear();

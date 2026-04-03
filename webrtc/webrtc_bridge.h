@@ -90,13 +90,22 @@ typedef enum WebRtcPeerState{
 typedef struct WebRtcSenderConfig{
     char stream_name[128];
     
-    // 媒体参数
+    // video参数
     int width;
     int height;
     int fps;
     char video_codec[32];
-    int payload_type;
+    int video_payload_type;
     int video_clock_rate;
+
+
+    //audio
+    int enable_audio;
+    char audio_codec[32];
+    int audio_payload_type;
+    int audio_clock_rate;
+    int audio_sample_rate;
+    int audio_channels;
 
     // ICE/中继参数
     //STUN 的价值就是帮助你知道：“我在外网视角下，被映射成了哪个 IP:port。”
@@ -105,7 +114,6 @@ typedef struct WebRtcSenderConfig{
     char turn_url[256];
     char turn_username[128];
     char turn_password[128];
-
     int signaling_port;
 }WebRtcSenderConfig;
 
@@ -118,6 +126,17 @@ typedef struct WebRtcEncodedVideoFrame{
 
     int is_keyframe;
 }WebRtcEncodedVideoFrame;
+
+typedef struct WebRtcEncodedAudioFrame{
+    const uint8_t *data;
+    size_t size;
+
+    int64_t pts_us;
+    
+    uint32_t sample_rate;
+    uint16_t channels;
+    uint32_t samples_per_channel;
+}WebRtcEncodedAudioFrame;
 
 
 //description 解决的是“协议和媒体怎么谈”
@@ -152,6 +171,8 @@ int webrtc_sender_set_remote_description(WebRtcSender *sender,const char *type,c
 int webrtc_sender_add_remote_candidate(WebRtcSender *sender,const char *candidate,const char *mid);
 
 int webrtc_sender_send_video(WebRtcSender *sender,const WebRtcEncodedVideoFrame *frame);
+
+int webrtc_sender_send_audio(WebRtcSender *sender,const WebRtcEncodedAudioFrame *frame);
 
 WebRtcPeerState webrtc_sender_get_state(const WebRtcSender *sender);
 int webrtc_sender_is_ready(const WebRtcSender *sender);

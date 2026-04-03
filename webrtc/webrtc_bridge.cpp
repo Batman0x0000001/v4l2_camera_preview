@@ -43,6 +43,10 @@ public:
         return m_Publisher ? m_Publisher->SendVideo(frame) : -1;
     }
 
+    int SendAudio(const WebRtcEncodedAudioFrame *frame) {
+        return m_Publisher ? m_Publisher->SendAudio(frame) : -1;
+    }
+
     void Stop() {
         if(m_Publisher){
             m_Publisher->Stop();
@@ -93,10 +97,17 @@ extern "C" void webrtc_sender_config_init(WebRtcSenderConfig *cfg) {
     cfg->height = 480;
     cfg->fps = 30;
 
-    cfg->payload_type = 96;
+    cfg->video_payload_type = 96;
     cfg->video_clock_rate = 90000;
 
     cfg->signaling_port = 9001;
+
+    cfg->enable_audio = 0;
+    webrtc_copy_text(cfg->audio_codec, sizeof(cfg->audio_codec), "OPUS");
+    cfg->audio_payload_type = 111;
+    cfg->audio_clock_rate = 48000;
+    cfg->audio_sample_rate = 48000;
+    cfg->audio_channels = 2;
 }
 
 extern "C" void webrtc_sender_callbacks_init(WebRtcSenderCallbacks *callbacks) {
@@ -197,6 +208,15 @@ extern "C" int webrtc_sender_send_video(WebRtcSender *sender,
     }
 
     return sender->impl->SendVideo(frame);
+}
+
+extern "C" int webrtc_sender_send_audio(WebRtcSender *sender,
+                                        const WebRtcEncodedAudioFrame *frame) {
+    if (!sender || !sender->impl || !frame || !frame->data || frame->size == 0) {
+        return -1;
+    }
+
+    return sender->impl->SendAudio(frame);
 }
 
 extern "C" WebRtcPeerState webrtc_sender_get_state(const WebRtcSender *sender) {

@@ -130,41 +130,48 @@ typedef struct StreamState {
     uint32_t webrtc_local_candidate_index;
     uint32_t webrtc_remote_candidate_index;
 
+    //video
     const AVCodec *encoder;
     AVCodecContext *enc_ctx;
     AVFormatContext *ofmt_ctx;
     AVStream *video_st;
-
     struct SwsContext *sws_ctx;
-
     AVFrame *yuv_frame;
     AVPacket *pkt;
 
+    //audio
+    const AVCodec *audio_encoder;
+    AVCodecContext *audio_enc_ctx;
+    SwrContext *audio_swr_ctx;
+    AVFrame *audio_frame;
+    AVPacket *audio_pkt;
+    AVAudioFifo *audio_fifo;
+    int audio_frame_size;//编码器一次期望吃多少sample/frame
+    uint64_t audio_anchor_capture_time_us;
+    uint64_t audio_anchor_first_frame_index;
+    int have_audio_anchor;
+    int64_t audio_next_pts;
+
+    uint64_t audio_frames_encoded;
+    uint64_t audio_chunks_consumed;
+
     int fps;
 
-    /* 已送入编码链路的视频帧计数，便于统计。 */
+    //已送入编码链路的视频帧计数，便于统计
     int64_t frame_index;
 
-    /* 推流模块自己的相对时间基起点。 */
+    //推流模块自己的相对时间基起点
     uint64_t base_timestamp_us;
     int have_base_timestamp;
 
-    /* 输入视频 PTS 单调性保护。 */
+    //输入视频 PTS 单调性保护
     int64_t last_input_pts;
 
     SDL_mutex *mutex;
 
-    /*
-     * enabled:
-     *     模块资源是否初始化成功。
-     * accepting_frames:
-     *     工作线程当前是否继续接收新数据。
-     * fatal_error:
-     *     不可恢复错误，外层应停止继续喂数据。
-     */
-    int enabled;
-    int accepting_frames;
-    int fatal_error;
+    int enabled;//模块资源是否初始化成功
+    int accepting_frames;//工作线程当前是否继续接收新数据
+    int fatal_error;//不可恢复错误，外层应停止继续喂数据
 
     SDL_Thread *thread;
     FrameQueue queue;
